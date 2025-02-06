@@ -109,3 +109,22 @@ def _server_internal(host: str, port: int) -> None:
         print(f"Accepting connection from {addr}")
         client_handler = threading.Thread(target=_handle_new_client, args=(client_socket,))
         client_handler.start()
+
+
+# Basic call-and-response cli for testing robot functions
+if __name__ == "__main__":
+    start_server()
+
+    while True:
+        try:
+            string = input("Enter a command: ")
+        
+            if string == "exit":
+                exit(0)
+
+            else:
+                bot_id, command = string.split(" ", 1)
+                response = send_command(int(bot_id), command)
+                print(f"Response: {response}")
+        except ValueError as e:
+            print(e)
