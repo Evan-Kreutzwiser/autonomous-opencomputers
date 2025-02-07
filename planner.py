@@ -13,108 +13,24 @@ from pddl.logic.functions import (
 from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
+from recipes import recipes_ingredients, items_list
 
-types = { "robot": "object" }
-
-items_list = [
-    # Vanilla items
-    "cobblestone",
-    "stone",
-    "coal",
-    "iron_ore",
-    "gold_ore",
-    "iron",
-    "gold",
-    "diamond",
-    "redstone",
-    "iron_nugget",
-    "gold_nugget",
-    "log",
-    "plank",
-    "stick",
-    "compass",
-    "clock",
-
-    # OpenComputers Components
-    "cpu_tier_1",
-    "cpu_tier_2",
-    "cpu_tier_3",
-    "internet_card",
-    "geolyzer",
-    "inventory_controller",
-    "diamond_nugget",
-
-    # Tools
-    "wooden_pickaxe",
-    "stone_pickaxe",
-    "iron_pickaxe",
-    "diamond_pickaxe",
-]
-
-recipes = {
-    # Vanilla items
-    "plank": {
-        "log": 1,
-        "output": 4
-    },
-    "stick": {
-        "plank": 2,
-        "output": 4
-    },
-    "compass": {
-        "iron": 4,
-        "redstone": 1,
-        "output": 1
-    },
-    "clock": {
-        "gold": 4,
-        "redstone": 1,
-        "output": 1
-    },
-    "iron_nugget": {
-        "iron": 1,
-        "output": 9
-    },
-    "gold_nugget": {
-        "gold": 1,
-        "output": 9
-    },
-
-    # Tools
-    "wooden_pickaxe": {
-        "plank": 3,
-        "stick": 2,
-        "output": 1
-    },
-    "stone_pickaxe": {
-        "cobblestone": 3,
-        "stick": 2,
-        "output": 1
-    },
-    "iron_pickaxe": {
-        "iron": 3,
-        "stick": 2,
-        "output": 1
-    },
-    "diamond_pickaxe": {
-        "diamond": 3,
-        "stick": 2,
-        "output": 1
-    }
-}
+types = {"robot": "object"}
 
 inventory_functions = {}
 for item in items_list:
-    inventory_functions[item] = NumericFunction(f"robot_inventory_{item}", Variable("r", ("robot",)))
+    inventory_functions[item] = NumericFunction(
+        f"robot_inventory_{item}", Variable("r", ("robot",))
+    )
+
 
 def create_domain() -> Domain:
-    robot = Variable("r", ("robot", ))
+    robot = Variable("r", ("robot",))
     robot_inventory_functions = {inventory_functions[item]: None for item in items_list}
 
     actions = []
 
-
-    for item, recipe in recipes.items():
+    for item, recipe in recipes_ingredients.items():
         crafting_preconditions = []
         for ingredient, amount in recipe.items():
             if ingredient != "output":
@@ -135,7 +51,7 @@ def create_domain() -> Domain:
             precondition=effects.And(*crafting_preconditions),
             effect=effects.And(*crafting_effects)
         ))
-    
+
     for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold")]:
         actions.append(Action(
             f"smelt_8_{ore}",
