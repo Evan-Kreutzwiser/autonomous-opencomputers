@@ -1,10 +1,20 @@
 from pddl.logic import Predicate, constants, Variable, functions, effects, Constant
-from pddl.logic.functions import NumericFunction, NumericValue, GreaterEqualThan, LesserEqualThan, EqualTo, Increase, Decrease
+from pddl.logic.functions import (
+    NumericFunction,
+    NumericValue,
+    GreaterEqualThan,
+    LesserEqualThan,
+    Assign,
+    EqualTo,
+    Increase,
+    Decrease,
+    Divide,
+)
 from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
 
-types = {"robot": None}
+types = { "robot": "object" }
 
 items_list = [
     # Vanilla items
@@ -19,9 +29,9 @@ items_list = [
     "redstone",
     "iron_nugget",
     "gold_nugget",
-    "logs",
-    "planks",
-    "sticks",
+    "log",
+    "plank",
+    "stick",
     "compass",
     "clock",
 
@@ -43,12 +53,12 @@ items_list = [
 
 recipes = {
     # Vanilla items
-    "planks": {
-        "logs": 1,
+    "plank": {
+        "log": 1,
         "output": 4
     },
-    "sticks": {
-        "planks": 2,
+    "stick": {
+        "plank": 2,
         "output": 4
     },
     "compass": {
@@ -72,23 +82,23 @@ recipes = {
 
     # Tools
     "wooden_pickaxe": {
-        "planks": 3,
-        "sticks": 2,
+        "plank": 3,
+        "stick": 2,
         "output": 1
     },
     "stone_pickaxe": {
         "cobblestone": 3,
-        "sticks": 2,
+        "stick": 2,
         "output": 1
     },
     "iron_pickaxe": {
         "iron": 3,
-        "sticks": 2,
+        "stick": 2,
         "output": 1
     },
     "diamond_pickaxe": {
         "diamond": 3,
-        "sticks": 2,
+        "stick": 2,
         "output": 1
     }
 }
@@ -125,6 +135,36 @@ def create_domain() -> Domain:
             precondition=effects.And(*crafting_preconditions),
             effect=effects.And(*crafting_effects)
         ))
+    
+    for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold")]:
+        actions.append(Action(
+            f"smelt_8_{ore}",
+            parameters=[robot],
+            precondition=effects.And(
+                GreaterEqualThan(inventory_functions[ore](robot), NumericValue(8)),
+                GreaterEqualThan(inventory_functions["coal"](robot), NumericValue(1))
+            ),
+            effect=effects.And(
+                Decrease(inventory_functions[ore](robot), NumericValue(8)),
+                Increase(inventory_functions[cooked](robot), NumericValue(8)),
+                Decrease(inventory_functions["coal"](robot), NumericValue(1))
+            )
+        ))
+
+        actions.append(Action(
+            f"smelt_partial_{ore}",
+            parameters=[robot],
+            precondition=effects.And(
+                GreaterEqualThan(inventory_functions["coal"](robot), NumericValue(1)),
+                GreaterEqualThan(inventory_functions[ore](robot), NumericValue(1)),
+                LesserEqualThan(inventory_functions[ore](robot), NumericValue(8))
+            ),
+            effect=effects.And(
+                Decrease(inventory_functions["coal"](robot), NumericValue(1)),
+                Increase(inventory_functions[cooked](robot), inventory_functions[ore](robot)),
+                Assign(inventory_functions[ore](robot), NumericValue(0))
+            )
+        ))
 
     domain = Domain(
         "OpenComputersPlanner",
@@ -137,7 +177,54 @@ def create_domain() -> Domain:
     return domain
 
 
+def create_problem(robots: dict[dict[str]]) -> Problem:
+    """
+    Create a PDDL problem from a dictionary of robots and their inventories.
+    
+    :param robots: A dictionary of robot ids and their inventories, 
+                   represented as a dictionary of item names and quantities.
+    :return: A PDDL Problem with the goal of creating a new robot.
+    """
+
+    initial_state = []
+    robot_objects = {robot_id: Constant(f"robot_{robot_id}", "robot") for robot_id in robots.keys()}
+
+    for robot_id, inventory in robots.items():
+        for item, quantity in inventory.items():
+            if item not in items_list:
+                print(f"WARNING: Robot {robot_id} has item \"{item}\" (x{quantity}), which is not recognized by the planner!")
+            else:
+                initial_state.append(EqualTo(inventory_functions[item](robot_objects[robot_id]), NumericValue(quantity)))
+        
+        # All items not listed in the inventory are assumed to be 0
+        for missing_item in [item for item in items_list if item not in inventory.keys()]:
+            initial_state.append(EqualTo(inventory_functions[missing_item](robot_objects[robot_id]), NumericValue(0)))
+
+    problem = Problem(
+        "OpenComputersPlanner",
+        domain=create_domain(),
+        objects=robot_objects.values(),
+        requirements=[Requirements.TYPING, Requirements.NUMERIC_FLUENTS],
+        init=initial_state,
+        # Placeholder goal for testing output files
+        goal=GreaterEqualThan(inventory_functions["diamond_pickaxe"](robot_objects[1]), NumericValue(1))
+    )
+
+    return problem
+
 if __name__ == "__main__":
     domain = create_domain()
     print(domain)
 
+    problem = create_problem({
+        1: {
+            "log": 6,
+            "diamond": 8,
+        },
+    })
+    print(problem)
+
+    open("domain.pddl", "w").write(str(domain))
+    # I'd prefer to keep this in-memory because of the frequent replanning,
+    # but would need a way to get it through to the planner's container
+    open("problem.pddl", "w").write(str(problem))
