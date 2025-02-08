@@ -20,6 +20,12 @@ items_list = [
     "stick",
     "compass",
     "clock",
+    "piston",
+    "redstone_torch",
+    "chest",
+    "crafting_table",
+    "hopper",
+    "dropper",
 
     # OpenComputers Components
     "analyzer",
@@ -43,6 +49,11 @@ items_list = [
     "control_unit",
     "disk_platter",
     "diamond_chip",
+    "hard_drive_tier_1",
+    "hard_drive_tier_2",
+    "hard_drive_tier_3",
+    "floppy_disk_drive",
+    #"floppy_disk",
 
     # Tools
     "wooden_pickaxe",
@@ -109,6 +120,46 @@ recipes = {
         ],
         "output": 1
     },
+    "redstone_torch": {
+        "recipe": [
+            [None, "redstone", None],
+            [None, "stick", None],
+            [None, None, None]
+        ],
+        "output": 1
+    },
+    "chest": {
+        "recipe": [
+            ["plank", "plank", "plank"],
+            ["plank", None, "plank"],
+            ["plank", "plank", "plank"]
+        ],
+        "output": 1
+    },
+    "crafting_table": {
+        "recipe": [
+            ["plank", "plank", None],
+            ["plank", "plank", None],
+            [None, None, None]
+        ],
+        "output": 1
+    },
+    "hopper": {
+        "recipe": [
+            ["iron", None, "iron"],
+            ["iron", "chest", "iron"],
+            [None, "iron", None]
+        ],
+        "output": 1
+    },
+    "dropper": {
+        "recipe": [
+            ["cobblestone", "cobblestone", "cobblestone"],
+            ["cobblestone", None, "cobblestone"],
+            ["cobblestone", "redstone", "cobblestone"]
+        ],
+        "output": 1
+    },
 
     # Tools
     "wooden_pickaxe": {
@@ -142,7 +193,173 @@ recipes = {
             [None, "stick", None]
         ],
         "output": 1
-    }
+    },
+
+    # OpenComputers Components
+    "analyzer": {
+        "recipe": [
+            ["redstone_torch", None, None],
+            ["transistor", "gold_nugget", None],
+            ["circuit", "gold_nugget", None]
+        ],
+        "output": 1
+    },
+
+    "cpu_tier_1": {
+        "recipe": [
+            ["iron_nugget", "redstone", "iron_nugget"],
+            ["microchip_tier_1", "control_unit", "microchip_tier_1"],
+            ["iron_nugget", "alu", "iron_nugget"]
+        ],
+        "output": 1
+    },
+    "cpu_tier_2": {
+        "recipe": [
+            ["gold_nugget", "redstone", "gold_nugget"],
+            ["microchip_tier_2", "control_unit", "microchip_tier_2"],
+            ["gold_nugget", "alu", "gold_nugget"]
+        ],
+        "output": 1
+    },
+    "cpu_tier_3": {
+        "recipe": [
+            ["diamond_chip", "redstone", "diamond_chip"],
+            ["microchip_tier_3", "control_unit", "microchip_tier_3"],
+            ["diamond_chip", "alu", "diamond_chip"]
+        ],
+        "output": 1
+    },
+    "card_base": {
+        "recipe": [
+            ["iron_nugget", None, None],
+            ["iron_nugget", "circuit", None],
+            ["iron_nugget", "gold_nugget", None]
+        ],
+        "output": 1
+    },
+    #"internet_card": {},
+    #"geolyzer": {},
+    "crafting_upgrade": {
+        "recipe": [
+            ["iron", None, "iron"],
+            ["microchip_tier_1", "crafting_table", "microchip_tier_1"],
+            ["iron", "circuit", "iron"]
+        ],
+        "output": 1
+    },
+    "inventory_upgrade": {
+        "recipe": [
+            ["plank", "hopper", "plank"],
+            ["dropper", "chest", "piston"],
+            ["plank", "microchip_tier_1", "plank"]
+        ],
+        "output": 1
+    },
+    "inventory_controller": {
+        "recipe": [
+            ["gold", "analyzer", "gold"],
+            ["dropper", "microchip_tier_2", "piston"],
+            ["gold", "circuit", "gold"]
+        ],
+        "output": 1
+    },
+    "cutting_wire": {
+        "recipe": [
+            [None, None, None],
+            ["stick", "iron_nugget", "stick"],
+            [None, None, None]
+        ],
+        "output": 1
+    },
+    #"transistor": {},
+    "microchip_tier_1": {
+        "recipe": [
+            ["iron_nugget", "iron_nugget", "iron_nugget"],
+            ["redstone", "transistor", "redstone"],
+            ["iron_nugget", "iron_nugget", "iron_nugget"]
+        ],
+        "output": 8
+    },
+    "microchip_tier_2": {
+        "recipe": [
+            ["gold_nugget", "gold_nugget", "gold_nugget"],
+            ["redstone", "transistor", "redstone"],
+            ["gold_nugget", "gold_nugget", "gold_nugget"]
+        ],
+        "output": 4
+    },
+    "microchip_tier_3": {
+        "recipe": [
+            ["diamond_chip", "diamond_chip", "diamond_chip"],
+            ["redstone", "transistor", "redstone"],
+            ["diamond_chip", "diamond_chip", "diamond_chip"]
+        ],
+        "output": 2
+    },
+    "alu": {
+        "recipe": [
+            ["iron_nugget", "redstone", "iron_nugget"],
+            ["transistor", "microchip_tier_1", "transistor"],
+            ["iron_nugget", "transistor", "iron_nugget"]
+        ],
+        "output": 1
+    },
+    "control_unit": {
+        "recipe": [
+            ["gold_nugget", "redstone", "gold_nugget"],
+            ["transistor", "clock", "transistor"],
+            ["gold_nugget", "transistor", "gold_nugget"]
+        ],
+        "output": 1
+    },
+    "disk_platter": {
+        "recipe": [
+            [None, "iron_nugget", None],
+            ["iron_nugget", None, "iron_nugget"],
+            [None, "iron_nugget", None]
+        ],
+        "output": 1
+    },
+    "diamond_chip": {
+        "recipe": [
+            ["cutting_wire", "diamond", None],
+            [None, None, None],
+            [None, None, None]
+        ],
+        "output": 6
+    },
+    "hard_drive_tier_1": {
+        "recipe": [
+            ["microchip_tier_1", "disk_platter", "iron"],
+            ["circuit", "disk_platter", "piston"],
+            ["microchip_tier_1", "disk_platter", "iron"]
+        ],
+        "output": 1
+    },
+    "hard_drive_tier_2": {
+        "recipe": [
+            ["microchip_tier_2", "disk_platter", "gold"],
+            ["circuit", "disk_platter", "piston"],
+            ["microchip_tier_2", "disk_platter", "gold"]
+        ],
+        "output": 1
+    },
+    "hard_drive_tier_3": {
+        "recipe": [
+            ["microchip_tier_3", "disk_platter", "diamond"],
+            ["circuit", "disk_platter", "piston"],
+            ["microchip_tier_3", "disk_platter", "diamond"]
+        ],
+        "output": 1
+    },
+    "floppy_disk_drive": {
+        "recipe": [
+            ["iron", "microchip_tier_1", "iron"],
+            ["piston", "stick", None],
+            ["iron", "circuit", "iron"]
+        ],
+        "output": 1
+    },
 }
 
 # (item, quantity) pairs for ingredients of each recipe
@@ -178,6 +395,9 @@ def convert_item_name(name: str, data_value: int) -> str:
         return "iron"
     if name == "minecraft:gold_ingot":
         return "gold"
+
+    if name == "opencomputers:diskdrive":
+        return "floppy_disk_drive"
 
     if name == "opencomputers:component":
         if data_value == 0:
@@ -224,6 +444,14 @@ def convert_item_name(name: str, data_value: int) -> str:
             return "disk_platter"
         if data_value == 29:
             return "diamond_chip"
+
+    if name == "opencomputers:storage":
+        if data_value == 2:
+            return "hard_drive_tier_1"
+        if data_value == 3:
+            return "hard_drive_tier_2"
+        if data_value == 4:
+            return "hard_drive_tier_3"
 
     if name == "opencomputers:tool" and data_value == 0:
         return "analyzer"

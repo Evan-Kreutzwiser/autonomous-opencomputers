@@ -69,7 +69,7 @@ def create_domain() -> Domain:
             effect=effects.And(*crafting_effects)
         ))
 
-    for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold")]:
+    for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold"), ("raw_circuit", "circuit")]:
         actions.append(Action(
             f"smelt_8_{ore}",
             parameters=[robot],
