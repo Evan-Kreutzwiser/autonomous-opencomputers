@@ -199,6 +199,17 @@ local function loop()
           end
         end
 
+      elseif command[1] == "inventory" then
+        local inventory = {}
+        for i = 1, robot.inventorySize() do
+          local stack = inv_controller.getStackInInternalSlot(i)
+          if stack then
+            -- Many modded items share an ID, and are distinguished by their data value
+            inventory[i] = {name = stack.name, count = stack.size, dataValue = stack.damage}
+          end
+        end
+        connection:write(toJson({success = true, inventory = inventory, size = robot.inventorySize()}))
+
       elseif command[1] == "craft" then
         -- Crafting recipe must be placed in a 3x3 area 
         -- in the top-left of the robot's inventory
