@@ -7,7 +7,6 @@ connections = {}
 class UpdateServer (http.server.BaseHTTPRequestHandler):
     """Provide robots a way to fetch new copies of their client runtime."""
     def do_GET(self):
-        print(self.path)
         if self.path != "/client":
             self.send_response(404)
             self.end_headers()
@@ -90,12 +89,15 @@ def _receive_message(client_socket: socket.socket) -> str:
     return message.decode()[:-1]
 
 
-def start_server(host='localhost', port=3) -> None:
-    threading.Thread(target=_server_internal, args=(host, port)).start()
+def start_server(host="localhost", port=3) -> None:
+    threading.Thread(target=_server_internal, args=(host, port), daemon=True).start()
 
     threading.Thread(
-        target=lambda: http.server.HTTPServer(("localhost", 80), UpdateServer).serve_forever(), 
-        name="Update Server"    
+        target=lambda: http.server.HTTPServer(
+            ("localhost", 80), UpdateServer
+        ).serve_forever(),
+        name="Update Server",
+        daemon=True,
     ).start()
 
 
