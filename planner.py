@@ -13,7 +13,9 @@ from pddl.logic.functions import (
 from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
-from recipes import recipes_ingredients, items_list
+from recipes import recipe_ingredients, recipes, items_list
+from robot import Robot
+import subprocess
 
 types = {"robot": "object"}
 
@@ -24,24 +26,39 @@ for item in items_list:
     )
 
 
+def _count_items(inventory: list[str, int]) -> dict[str, int]:
+    """
+    Robot inventory tracks individual slot contents, 
+    the planner just needs to know total quantities.
+    """
+    counts = {}
+    for item, quantity in inventory:
+        if item in counts:
+            counts[item] += quantity
+        else:
+            counts[item] = quantity
+
+    return counts
+
+
 def create_domain() -> Domain:
     robot = Variable("r", ("robot",))
     robot_inventory_functions = {inventory_functions[item]: None for item in items_list}
 
     actions = []
 
-    for item, recipe in recipes_ingredients.items():
+    for item, current_recipe in recipe_ingredients.items():
         crafting_preconditions = []
-        for ingredient, amount in recipe.items():
+        for ingredient, amount in current_recipe.items():
             if ingredient != "output":
                 crafting_preconditions.append(GreaterEqualThan(inventory_functions[ingredient], NumericValue(amount)))
 
         crafting_effects = [
             # Add the output item to this robot's inventory
-            Increase(inventory_functions[item], NumericValue(recipe["output"]))
+            Increase(inventory_functions[item], NumericValue(recipes[item]["output"]))
         ]
 
-        for ingredient, amount in recipe.items():
+        for ingredient, amount in current_recipe.items():
             if ingredient != "output":
                 crafting_effects.append(Decrease(inventory_functions[ingredient](robot), NumericValue(amount)))
 
@@ -93,7 +110,7 @@ def create_domain() -> Domain:
     return domain
 
 
-def create_problem(robots: dict[dict[str]]) -> Problem:
+def create_problem(robots: list[Robot]) -> Problem:
     """
     Create a PDDL problem from a dictionary of robots and their inventories.
     
@@ -103,9 +120,10 @@ def create_problem(robots: dict[dict[str]]) -> Problem:
     """
 
     initial_state = []
-    robot_objects = {robot_id: Constant(f"robot_{robot_id}", "robot") for robot_id in robots.keys()}
+    robot_objects = {robot.id: Constant(f"robot_{robot.id}", "robot") for robot in robots}
 
-    for robot_id, inventory in robots.items():
+    for robot in robots:
+        robot_id, inventory = robot.id, _count_items(robot.inventory)
         for item, quantity in inventory.items():
             if item not in items_list:
                 print(f"WARNING: Robot {robot_id} has item \"{item}\" (x{quantity}), which is not recognized by the planner!")
@@ -123,24 +141,60 @@ def create_problem(robots: dict[dict[str]]) -> Problem:
         requirements=[Requirements.TYPING, Requirements.NUMERIC_FLUENTS],
         init=initial_state,
         # Placeholder goal for testing output files
-        goal=GreaterEqualThan(inventory_functions["diamond_pickaxe"](robot_objects[1]), NumericValue(1))
+        goal=effects.And(
+                GreaterEqualThan(inventory_functions["diamond_pickaxe"](robot_objects[1]), NumericValue(1)),
+            )
     )
 
     return problem
 
+
+def replan(robots: list[Robot]) -> list[tuple[str, int]]:
+    problem = create_problem(robots)
+    open("problem.pddl", "w").write(str(problem))
+
+    output = subprocess.run("planutils run popf domain.pddl problem.pddl", capture_output=True, text=True, shell=True).stdout
+
+    # Even if no solution was found, this line should still print
+    # This separates the solution output from debug messages about pruning and optimization
+    solution = output.split("Initial heuristic")[1]
+
+
+    if "Solution Found" in solution:
+        lines = solution.split("\n")
+        actions = []
+
+        # Interpretes POPF output to obtain the plan
+        # Extraction will need changes if a different planner is used
+        # TODO: Surely somewhere theres a planner that can handle 
+        # numeric fluents and output in a structure format?
+        for line in lines:
+            if ": (" in line:
+                # Extract the action and argument from the line
+                action_string = line.split(": (")[1].split(")")[0]
+                # Robot constants are named robot_#
+                robot = int(action_string.split(" ")[1].split("_")[1])
+                actions.append((action_string.split(" ")[0], robot))
+
+        return actions
+    else:
+        raise RuntimeError("No planner solution found.")
+
+
 if __name__ == "__main__":
     domain = create_domain()
-    print(domain)
 
-    problem = create_problem({
-        1: {
-            "log": 6,
-            "diamond": 8,
-        },
-    })
-    print(problem)
+    robot = Robot(1)
+    robot.inventory = [
+        ("plank", 2),
+        ("diamond", 3),
+    ]
+    problem = create_problem([robot])
 
     open("domain.pddl", "w").write(str(domain))
     # I'd prefer to keep this in-memory because of the frequent replanning,
     # but would need a way to get it through to the planner's container
     open("problem.pddl", "w").write(str(problem))
+
+    plan = replan([robot])
+    print("\n".join([action[0] for action in plan]))
