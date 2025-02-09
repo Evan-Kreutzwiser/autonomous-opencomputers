@@ -89,29 +89,13 @@ def _receive_message(client_socket: socket.socket) -> str:
     return message.decode()[:-1]
 
 
-def start_server(host="localhost", port=3) -> None:
-    threading.Thread(target=_server_internal, args=(host, port), daemon=True).start()
-
-    threading.Thread(
-        target=lambda: http.server.HTTPServer(
-            ("localhost", 80), UpdateServer
-        ).serve_forever(),
+    http_server = http.server.HTTPServer(("localhost", 8080), UpdateServer)
+    http_thread = threading.Thread(
+        target=http_server.serve_forever,
         name="Update Server",
-        daemon=True,
-    ).start()
-
-
-def _server_internal(host: str, port: int) -> None:
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(5)
-    print(f"Server listening on {host}:{port}")
-    while True:
-        client_socket, addr = server.accept()
-        print(f"Accepting connection from {addr}")
-        client_handler = threading.Thread(target=_handle_new_client, args=(client_socket,))
-        client_handler.start()
-
+        daemon=True
+    )
+    http_thread.start()
 
 # Basic call-and-response cli for testing robot functions
 if __name__ == "__main__":

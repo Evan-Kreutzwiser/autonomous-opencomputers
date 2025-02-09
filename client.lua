@@ -60,7 +60,7 @@ local function connect()
   print("Connecting to server")
   local reason
   while true do
-    connection, reason = internet.open("localhost:3")
+    connection, reason = internet.open("localhost:3000")
     if connection then
       connection:write(tostring(botId) .. ";")
       connection:flush()
@@ -232,7 +232,7 @@ local function loop()
       elseif command[1] == "update" then
         -- Download new copy of client.lua
         -- Allows updating existing robots during development
-        local ok, err = shell.execute("wget -f http://localhost/client client.lua")
+        local ok, err = shell.execute("wget -f http://localhost/client:8080 client.lua")
         if not ok then
           connection:write("{\"success\": false, \"error\": \"" .. err or "nil" .. "\"};")
         else
