@@ -35,7 +35,7 @@ class CommandInput(Input):
                     logger.error(data['error'], id)
                     failed = True
             if failed:
-                print("Not all robots updated successfully")
+                logger.error("Not all robots updated successfully", "User")
             return
         
         split = self.value.split(" ", 1)

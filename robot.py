@@ -52,13 +52,13 @@ class Robot:
 
     async def _move(self, side: Literal["front", "left", "right", "back", "up", "down"]) -> bool:
         if side not in ["front", "left", "right", "back", "up", "down"]:
-            print(f"[{self.id}] Move: Invalid side: {side}")
+            logger.error(f"Invalid side for movement: {side}", self.id)
             return False
         
         response = await webserver.send_command(self.id, f"move {side}")
         data = json.loads(response)
         if not data["success"]:
-            print(f"[{self.id}] Move: Error: {data['error']}")
+            logger.error(f"Move: {data['error']}", self.id)
             return False
         
         # Update recorded position
@@ -91,7 +91,7 @@ class Robot:
     async def _turn_to_face(self, direction: str) -> bool:
         """Turn to face one of the caridinal directions."""
         if direction not in ["north", "east", "south", "west"]:
-            print(f"[{self.id}] Invalid direction: {direction}")
+            logger.error(f"Invalid direction: {direction}", self.id)
             return False
 
         if direction == self.direction:
@@ -107,7 +107,7 @@ class Robot:
         response = await webserver.send_command(self.id, f"turn left")
         data = json.loads(response)
         if not data["success"]:
-            print(f"[{self.id}] Turn Left: Error: {data['error']}")
+            logger.error(f"Turn Left: {data['error']}", self.id)
             return False
 
         self.direction = left_of(self.direction)
@@ -117,7 +117,7 @@ class Robot:
         response = await webserver.send_command(self.id, f"turn right")
         data = json.loads(response)
         if not data["success"]:
-            print(f"[{self.id}] Turn Right: Error: {data['error']}")
+            logger.error(f"Turn Right: {data['error']}", self.id)
             return False
 
         self.direction = right_of(self.direction)
@@ -132,7 +132,7 @@ class Robot:
         response = await webserver.send_command(self.id, "inventory")
         data = json.loads(response)
         if not data["success"]:
-            print(f"[{self.id}] Update Inventory: Error: {data['error']}")
+            logger.error(f"Update Inventory: {data['error']}", self.id)
             return False
 
         inv = [None] * data["size"]

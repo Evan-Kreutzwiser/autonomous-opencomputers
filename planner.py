@@ -126,7 +126,7 @@ def create_problem(robots: dict[Robot]) -> Problem:
         inventory = _count_items(robot.inventory)
         for item, quantity in inventory.items():
             if item not in items_list:
-                print(f"WARNING: Robot {robot.id} has item \"{item}\" (x{quantity}), which is not recognized by the planner!")
+                logger.info(f"Warning: Robot has item \"{item}\" (x{quantity}), which is not recognized by the planner!", robot.id)
             else:
                 initial_state.append(EqualTo(inventory_functions[item](robot_objects[robot.id]), NumericValue(quantity)))
         

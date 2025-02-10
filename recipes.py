@@ -2,6 +2,9 @@
 
 """
 
+import logger
+
+
 items_list = [
     # Vanilla items
     "cobblestone",
@@ -537,7 +540,7 @@ for item, data in recipes.items():
             recipe_ingredients[item][ingredient] += 1
 
         if ingredient not in items_list:
-            print(f"Warmomg: Ingredient {ingredient} not in items_list")
+            logger.info(f"Warning: Ingredient {ingredient} not in items_list", "Server")
 
 
 def convert_item_name(name: str, data_value: int) -> str:
@@ -643,5 +646,5 @@ def convert_item_name(name: str, data_value: int) -> str:
     if name == "opencomputers:tool" and data_value == 0:
         return "analyzer"
 
-    print(f"Warning: Unrecognized item name: {name}")
+    logger.info(f"Warning: Unrecognized item in robot inventory: {name}", "Server")
     return name
