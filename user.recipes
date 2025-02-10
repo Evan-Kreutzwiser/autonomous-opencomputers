@@ -1,0 +1,44 @@
+# OpenComputers config file
+# Place this in the config\opencomputers of the minecraft installation with the opencomputers mod
+
+include file("default.recipes")
+
+# Custom Recipes
+
+# Replace items difficult for robots to obtain (E.g. paper, mob drops)
+transistor {
+  input: [[ingotIron, ingotIron, ingotIron]
+          [nuggetGold, redstone, nuggetGold]
+          ["", redstone, ""]]
+  output: 8
+}
+
+eeprom {
+  input: [[nuggetGold, "oc:materialTransistor", nuggetGold]
+          ["oc:circuitChip1", redstone, "oc:circuitChip1"]
+          [nuggetGold, torchRedstoneActive, nuggetGold]]
+}
+
+floppy {
+  input: [[ingotIron, lever, ingotIron]
+          [nuggetGold, "oc:materialDisk", nuggetGold]
+          [ingotIron, redstone, ingotIron]]
+}
+
+internetcard {
+  input: [[gemDiamond, "oc:circuitChip2", torchRedstoneActive]
+          ["", "oc:materialCard", redstone]]
+}
+
+geolyzer {
+  input: [[ingotGold, compass, ingotGold]
+          [gemDiamond, "oc:circuitChip2", gemDiamond]
+          [ingotGold, "oc:materialCircuitBoardPrinted", ingotGold]]
+}
+
+rawcircuitboard {
+  type: shaped
+  input: [[nuggetGold, nuggetGold, nuggetGold]
+          [nuggetIron, nuggetIron, nuggetIron]]
+  output: 4
+}
