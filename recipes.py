@@ -22,16 +22,26 @@ items_list = [
     "clock",
     "piston",
     "redstone_torch",
+    "lever",
     "chest",
     "crafting_table",
+    "furnace",
     "hopper",
     "dropper",
+    "iron_bars",
 
     # OpenComputers Components
     "analyzer",
+    "assembler",
     "cpu_tier_1",
     "cpu_tier_2",
     "cpu_tier_3",
+    "ram_tier_1",
+    "ram_tier_1_5",
+    "ram_tier_2",
+    "ram_tier_2_5",
+    "ram_tier_3",
+    "ram_tier_3_5",
     "card_base",
     "internet_card",
     "geolyzer",
@@ -53,7 +63,12 @@ items_list = [
     "hard_drive_tier_2",
     "hard_drive_tier_3",
     "floppy_disk_drive",
-    #"floppy_disk",
+    "floppy_disk",
+    "eeprom",
+    "case_tier_1",
+    "case_tier_2",
+    "case_tier_3",
+    "robot",
 
     # Tools
     "wooden_pickaxe",
@@ -128,6 +143,14 @@ recipes = {
         ],
         "output": 1
     },
+    "lever": {
+        "recipe": [
+            [None, "stick", None],
+            [None, "cobblestone", None],
+            [None, None, None]
+        ],
+        "output": 1
+    },
     "chest": {
         "recipe": [
             ["plank", "plank", "plank"],
@@ -141,6 +164,14 @@ recipes = {
             ["plank", "plank", None],
             ["plank", "plank", None],
             [None, None, None]
+        ],
+        "output": 1
+    },
+    "furnace": {
+        "recipe": [
+            ["cobblestone", "cobblestone", "cobblestone"],
+            ["cobblestone", None, "cobblestone"],
+            ["cobblestone", "cobblestone", "cobblestone"]
         ],
         "output": 1
     },
@@ -159,6 +190,14 @@ recipes = {
             ["cobblestone", "redstone", "cobblestone"]
         ],
         "output": 1
+    },
+    "iron_bars": {
+        "recipe": [
+            ["iron", "iron", "iron"],
+            ["iron", "iron", "iron"],
+            [None, None, None]
+        ],
+        "output": 16
     },
 
     # Tools
@@ -204,7 +243,14 @@ recipes = {
         ],
         "output": 1
     },
-
+    "assembler": {
+        "recipe": [
+            ["iron", "crafting_table", "iron"],
+            ["piston", "microchip_tier_2", "piston"],
+            ["iron", "circuit", "iron"]
+        ],
+        "output": 1
+    },
     "cpu_tier_1": {
         "recipe": [
             ["iron_nugget", "redstone", "iron_nugget"],
@@ -229,6 +275,54 @@ recipes = {
         ],
         "output": 1
     },
+    "ram_tier_1": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_1", "iron_nugget", "microchip_tier_1"],
+            [None, "circuit", None]
+        ],
+        "output": 1
+    },
+    "ram_tier_1_5": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_1", "microchip_tier_2", "microchip_tier_1"],
+            [None, "circuit", None]
+        ],
+        "output": 1
+    },
+    "ram_tier_2": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_2", "iron_nugget", "microchip_tier_2"],
+            [None, "circuit", None]
+        ],
+        "output": 1
+    },
+    "ram_tier_2_5": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_2", "microchip_tier_3", "microchip_tier_2"],
+            [None, "circuit", None]
+        ],
+        "output": 1
+    },
+    "ram_tier_3": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_3", "iron_nugget", "microchip_tier_3"],
+            [None, "circuit", None]
+        ],
+        "output": 1
+    },
+    "ram_tier_3_5": {
+        "recipe": [
+            [None, None, None],
+            ["microchip_tier_3", "microchip_tier_3", "microchip_tier_3"],
+            ["microchip_tier_2", "circuit", "microchip_tier_2"]
+        ],
+        "output": 1
+    },
     "card_base": {
         "recipe": [
             ["iron_nugget", None, None],
@@ -237,8 +331,22 @@ recipes = {
         ],
         "output": 1
     },
-    #"internet_card": {},
-    #"geolyzer": {},
+    "internet_card": {
+        "recipe": [
+            [None, None, None],
+            ["diamond", "microchip_tier_2", "redstone_torch"],
+            [None, "card_base", "redstone"]
+        ],
+        "output": 1
+    },
+    "geolyzer": {
+        "recipe": [
+            ["gold", "compass", "gold"],
+            ["diamond", "microchip_tier_2", "diamond"],
+            ["gold", "circuit", "gold"]
+        ],
+        "output": 1
+    },
     "crafting_upgrade": {
         "recipe": [
             ["iron", None, "iron"],
@@ -271,7 +379,14 @@ recipes = {
         ],
         "output": 1
     },
-    #"transistor": {},
+    "transistor": {
+        "recipe": [
+            ["iron", "iron", "iron"],
+            ["gold_nugget", "redstone", "gold_nugget"],
+            [None, "redstone", None]
+        ],
+        "output": 8
+    },
     "microchip_tier_1": {
         "recipe": [
             ["iron_nugget", "iron_nugget", "iron_nugget"],
@@ -328,6 +443,14 @@ recipes = {
         ],
         "output": 6
     },
+    "raw_circuit": {
+        "recipe": [
+            [None, None, None],
+            ["gold_nugget", "gold_nugget", "gold_nugget"],
+            ["iron_nugget", "iron_nugget", "iron_nugget"]
+        ],
+        "output": 4
+    },
     "hard_drive_tier_1": {
         "recipe": [
             ["microchip_tier_1", "disk_platter", "iron"],
@@ -360,6 +483,46 @@ recipes = {
         ],
         "output": 1
     },
+    "floppy_disk": {
+        "recipe": [
+            ["iron", "lever", "iron"],
+            ["gold_nugget", "disk_platter", "gold_nugget"],
+            ["iron", "redstone", "iron"]
+        ],
+        "output": 1
+    },
+    "eeprom": {
+        "recipe": [
+            ["gold_nugget", "transistor", "gold_nugget"],
+            ["microchip_tier_1", "redstone", "microchip_tier_1"],
+            ["gold_nugget", "redstone_torch", "gold_nugget"]
+        ],
+        "output": 1
+    },
+    "case_tier_1": {
+        "recipe": [
+            ["iron", "microchip_tier_1", "iron"],
+            ["iron_bars", "chest", "iron_bars"],
+            ["iron", "circuit", "iron"]
+        ],
+        "output": 1
+    },
+    "case_tier_2": {
+        "recipe": [
+            ["gold", "microchip_tier_2", "gold"],
+            ["iron_bars", "chest", "iron_bars"],
+            ["gold", "circuit", "gold"]
+        ],
+        "output": 1
+    },
+    "case_tier_3": {
+        "recipe": [
+            ["diamond", "microchip_tier_3", "diamond"],
+            ["iron_bars", "chest", "iron_bars"],
+            ["diamond", "circuit", "diamond"]
+        ],
+        "output": 1
+    }
 }
 
 # (item, quantity) pairs for ingredients of each recipe
@@ -396,8 +559,16 @@ def convert_item_name(name: str, data_value: int) -> str:
     if name == "minecraft:gold_ingot":
         return "gold"
 
+    if name == "opencomputers:geolyzer":
+        return "geolyzer"
     if name == "opencomputers:diskdrive":
         return "floppy_disk_drive"
+    if name == "opencomputers:case1":
+        return "case_tier_1"
+    if name == "opencomputers:case2":
+        return "case_tier_2"
+    if name == "opencomputers:case3":
+        return "case_tier_3"
 
     if name == "opencomputers:component":
         if data_value == 0:
@@ -406,6 +577,18 @@ def convert_item_name(name: str, data_value: int) -> str:
             return "cpu_tier_2"
         if data_value == 2:
             return "cpu_tier_3"
+        if data_value == 6:
+            return "ram_tier_1"
+        if data_value == 7:
+            return "ram_tier_1_5"
+        if data_value == 8:
+            return "ram_tier_2"
+        if data_value == 9:
+            return "ram_tier_2_5"
+        if data_value == 10:
+            return "ram_tier_3"
+        if data_value == 11:
+            return "ram_tier_3_5"
 
     if name == "opencomputers:card":
         if data_value == 8:
@@ -446,6 +629,10 @@ def convert_item_name(name: str, data_value: int) -> str:
             return "diamond_chip"
 
     if name == "opencomputers:storage":
+        if data_value == 0:
+            return "eeprom"
+        if data_value == 1:
+            return "floppy_disk"
         if data_value == 2:
             return "hard_drive_tier_1"
         if data_value == 3:
