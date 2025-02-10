@@ -1,8 +1,16 @@
+import asyncio
+import json
+import logger
 import socket
 import threading
 import http.server
 
-connections = {}
+connections: dict[int, tuple[asyncio.StreamReader, asyncio.StreamWriter]] = {}
+
+new_connections = []
+removed_connections = []
+# Stops the planner to handle new/removed agents
+connections_updated_event = asyncio.Event()
 
 class UpdateServer (http.server.BaseHTTPRequestHandler):
     """Provide robots a way to fetch new copies of their client runtime."""
@@ -20,74 +28,98 @@ class UpdateServer (http.server.BaseHTTPRequestHandler):
             self.wfile.write(file.read().encode())
 
 
+def _disconnect(id):
+    connections.pop(id)
+    if id in removed_connections:
+        removed_connections.append(id)
+        connections_updated_event.set()
+
 def get_robots() -> list[int]:
     """Get a list of all connected robots"""
     return list(connections.keys())
 
 # Send a command to a bot, and returns the response. All commands will return a response or acknowledgement.
 # If the connection fails or the bot is not online, the function will return an empty string.
-def send_command(bot_id: int, message: str) -> str:
-    socket = connections.get(bot_id)
-    if not socket:
-        print(f"Failed to send command ({message}): Bot {bot_id} not connected")
+async def send_command(bot_id: int, message: str) -> str:
+    connection = connections.get(bot_id)
+    if not connection:
+        logger.error(f"Failed to send command ({message}): Bot not connected", bot_id)
         return ""
+    reader, writer = connection
 
     try:
-        socket.sendall((message + ";\n").encode())
-        return _receive_message(socket)
-    
+        writer.write((message + ";\n").encode())
+        message = await _receive_message(reader)
+        if message == "":
+            logger.error(f"Failed to send command ({message}): No response", bot_id)
+            writer.close()
+            _disconnect(bot_id)
+            return ""
+        else:
+            return message
+
     except ConnectionResetError:
-        print(f"Failed to send command ({message}): Bot {bot_id} connection reset")
-        connections.pop(bot_id)
+        logger.error(f"Failed to send command ({message}): Connection reset", bot_id)
+        writer.close()
+        _disconnect(bot_id)
         return ""
     except ConnectionAbortedError:
-        print(f"Failed to send command ({message}): Bot {bot_id} connection aborted by host")
-        connections.pop(bot_id)
+        logger.error(f"Failed to send command ({message}): Connection aborted by host", bot_id)
+        writer.close()
+        _disconnect(bot_id)
         return ""
     
     except UnicodeDecodeError:
-        print(f"Bot {bot_id} response encoding incorrect for command ({message})")
+        logger.error(f"Response encoding incorrect for command ({message})", bot_id)
 
 
-def _handle_new_client(client_socket: socket.socket) -> None:
+async def _handle_new_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
-        message = _receive_message(client_socket)
+        message = await _receive_message(reader)
         if not message:
-            print(f"{client_socket.getpeername()}: Agent connection did not reply")
-            client_socket.close()
+            logger.error("Agent connection did not reply", writer.get_extra_info("peername"))
+            writer.close()
             return
         
         bot_id = int(message)
 
         if bot_id in connections:
-            print(f"Bot {bot_id} already connected: upadting connection")
+            logger.info("Bot reconnected - switching to new connection", bot_id)
         else:
-            print(f"Bot {bot_id} connected")
+            logger.info(f"Bot connected", bot_id)
 
         # Give the robot something to read to ensure the connect works
-        client_socket.sendall(("ack;\n").encode())
+        writer.write(("ack;\n").encode())
+        connections[bot_id] = (reader, writer)
+        new_connections.append(bot_id)
+        connections_updated_event.set()
         
-        connections[bot_id] = client_socket
     except UnicodeDecodeError:
-        print("[UnicodeDecodeError]: Agent text encoding incorrect")
-        client_socket.close()
+        logger.error("Agent text encoding incorrect, connection rejected", "Server")
+        writer.close()
     except ValueError:
-        print(f"[ValueError]: Received invalid bot ID: {message}")
-        client_socket.close()
+        logger.error(f"Received invalid bot ID: {message}, connection rejected", "Server")
+        writer.close()
 
-
-# Returns an empty string if the connection is closed
-def _receive_message(client_socket: socket.socket) -> str:
+async def _receive_message(reader: asyncio.StreamReader) -> str:
     message = b""
     while True:
-        data = client_socket.recv(1024)
-        if not data:
-            return
-        message += data
-        if message.endswith(b";"):
+        try:
+            message += await reader.readuntil(b";")
             break
+        except asyncio.IncompleteReadError:
+            return ""
+        except asyncio.LimitOverrunError:
+            continue
+
+    # Strip the trailing semicolon
     return message.decode()[:-1]
 
+
+async def start_server(host="localhost", port=3000) -> bool:
+    """Start socket server and serve the client file over http"""
+    await asyncio.start_server(_handle_new_client, host, port, start_serving=True)
+    logger.info(f"Listening on {host}:{port}", "Server")
 
     http_server = http.server.HTTPServer(("localhost", 8080), UpdateServer)
     http_thread = threading.Thread(
@@ -96,21 +128,27 @@ def _receive_message(client_socket: socket.socket) -> str:
         daemon=True
     )
     http_thread.start()
+    return True
 
 # Basic call-and-response cli for testing robot functions
-if __name__ == "__main__":
-    start_server()
+async def _cli():
+    await start_server()
 
     while True:
         try:
-            string = input("Enter a command: ")
-        
+            # Allow async network tasks to run while waiting for input 
+            string = await asyncio.get_event_loop().run_in_executor(None, input, "Enter a command: ")
+
             if string == "exit":
                 exit(0)
 
             else:
                 bot_id, command = string.split(" ", 1)
-                response = send_command(int(bot_id), command)
+                response = await send_command(int(bot_id), command)
                 print(f"Response: {response}")
         except ValueError as e:
             print(e)
+
+
+if __name__ == "__main__":
+    asyncio.run(_cli())

@@ -58,9 +58,8 @@ end
 
 local function connect()
   print("Connecting to server")
-  local reason
   while true do
-    connection, reason = internet.open("localhost:3000")
+    connection = internet.open("localhost:3000")
     if connection then
       connection:write(tostring(botId) .. ";")
       connection:flush()
@@ -74,8 +73,7 @@ local function connect()
       end
     end
     
-    print("Failed to connect to server.\n".. reason or "nil" .."\nRetrying in 3 seconds.")
-    connection:close()
+    print("Failed to connect to server.\nRetrying in 3 seconds.")
     os.sleep(3)
   end
 end
@@ -232,20 +230,20 @@ local function loop()
       elseif command[1] == "update" then
         -- Download new copy of client.lua
         -- Allows updating existing robots during development
-        local ok, err = shell.execute("wget -f http://localhost/client:8080 client.lua")
+        local ok, err = shell.execute("wget -f http://localhost:8080/client client.lua")
         if not ok then
           connection:write("{\"success\": false, \"error\": \"" .. err or "nil" .. "\"};")
         else
           connection:write("{\"success\": true};")
+          connection:flush()
+          connection:close()
+          
+          local ok, err = shell.execute("client.lua")
+          if not ok then
+            print("Error restarting client: " .. err)
+          end
+          exit = true
         end
-        connection:flush()
-        connection:close()
-        
-        local ok, err = shell.execute("client.lua")
-        if not ok then
-          print("Error restarting client: " .. err)
-        end
-        exit = true
 
       elseif command[1] == "exit" then
         connection:write("{\"success\": true};")

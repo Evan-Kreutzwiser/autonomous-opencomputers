@@ -13,6 +13,7 @@ from pddl.logic.functions import (
 from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
+import logger
 from recipes import recipe_ingredients, recipes, items_list
 from robot import Robot
 import subprocess
@@ -110,7 +111,7 @@ def create_domain() -> Domain:
     return domain
 
 
-def create_problem(robots: list[Robot]) -> Problem:
+def create_problem(robots: dict[Robot]) -> Problem:
     """
     Create a PDDL problem from a dictionary of robots and their inventories.
     
@@ -118,22 +119,23 @@ def create_problem(robots: list[Robot]) -> Problem:
                    represented as a dictionary of item names and quantities.
     :return: A PDDL Problem with the goal of creating a new robot.
     """
-
     initial_state = []
-    robot_objects = {robot.id: Constant(f"robot_{robot.id}", "robot") for robot in robots}
+    robot_objects = {id: Constant(f"robot_{id}", "robot") for id in robots.keys()}
 
-    for robot in robots:
-        robot_id, inventory = robot.id, _count_items(robot.inventory)
+    for robot in robots.values():
+        inventory = _count_items(robot.inventory)
         for item, quantity in inventory.items():
             if item not in items_list:
-                print(f"WARNING: Robot {robot_id} has item \"{item}\" (x{quantity}), which is not recognized by the planner!")
+                print(f"WARNING: Robot {robot.id} has item \"{item}\" (x{quantity}), which is not recognized by the planner!")
             else:
-                initial_state.append(EqualTo(inventory_functions[item](robot_objects[robot_id]), NumericValue(quantity)))
+                initial_state.append(EqualTo(inventory_functions[item](robot_objects[robot.id]), NumericValue(quantity)))
         
         # All items not listed in the inventory are assumed to be 0
         for missing_item in [item for item in items_list if item not in inventory.keys()]:
-            initial_state.append(EqualTo(inventory_functions[missing_item](robot_objects[robot_id]), NumericValue(0)))
+            initial_state.append(EqualTo(inventory_functions[missing_item](robot_objects[robot.id]), NumericValue(0)))
 
+
+    first_robot_id = list(robots.keys())[0]
     problem = Problem(
         "OpenComputersPlanner",
         domain=create_domain(),
@@ -142,14 +144,19 @@ def create_problem(robots: list[Robot]) -> Problem:
         init=initial_state,
         # Placeholder goal for testing output files
         goal=effects.And(
-                GreaterEqualThan(inventory_functions["diamond_pickaxe"](robot_objects[1]), NumericValue(1)),
+                GreaterEqualThan(inventory_functions["diamond_pickaxe"](robot_objects[first_robot_id]), NumericValue(1)),
             )
     )
 
     return problem
 
 
-def replan(robots: list[Robot]) -> list[tuple[str, int]]:
+def replan(robots: dict[Robot]) -> list[tuple[int, list[str]]]:
+    """
+    Determine which actions each robot should taek to contrstruct a new robot.
+
+    :param robots: All connected robots, with up to date inventories and empty action queues.
+    """
     problem = create_problem(robots)
     open("problem.pddl", "w").write(str(problem))
 
@@ -173,13 +180,16 @@ def replan(robots: list[Robot]) -> list[tuple[str, int]]:
                 # Extract the action and argument from the line
                 action_string = line.split(": (")[1].split(")")[0]
                 # Robot constants are named robot_#
-                robot = int(action_string.split(" ")[1].split("_")[1])
-                actions.append((action_string.split(" ")[0], robot))
+                terms = action_string.split(" ")
+                # Extract the id of the robot performing the task
+                robot = int(terms.pop(1).split("_")[1])
+                # Other terms describe the action itself
+                actions.append((robot, terms))
 
         return actions
     else:
-        raise RuntimeError("No planner solution found.")
-
+        logger.error("No solution found.", "Planner")
+        return []
 
 if __name__ == "__main__":
     domain = create_domain()
@@ -196,5 +206,5 @@ if __name__ == "__main__":
     # but would need a way to get it through to the planner's container
     open("problem.pddl", "w").write(str(problem))
 
-    plan = replan([robot])
+    plan = replan({1: robot})
     print("\n".join([action[0] for action in plan]))
