@@ -1,19 +1,38 @@
 import asyncio
+import json
+import re
+
+from rich import highlighter
+from textual import log
 from textual.app import App, ComposeResult
 from textual.containers import HorizontalGroup
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Header, Footer, Log, Button, Input
-from textual import log 
+from textual.widgets import Button, Header, Input, Log
+
 import logger
-import json
 import planner
-from robot import Robot
 import webserver
+from robot import Robot
 
 # Allow the planner loop to be paused so that commands can manually be run
 pause_event = asyncio.Event()
 pause_completed_event = asyncio.Event()
+
+class LogHighlighter(highlighter.Highlighter):
+    def highlight(self, text):
+        plain_text = text.plain
+        for match in re.finditer(r'\[.*?\]', plain_text):
+            text.stylize("dim", match.start(), match.start() + 1)
+            text.stylize("dim", match.end() - 1, match.end())
+        
+        if "Warning:" in plain_text:
+            start = plain_text.index("Warning:") + len("Warning:")
+            text.stylize("yellow", start)
+        
+        if "Error:" in plain_text:
+            start = plain_text.index("Error:") + len("Error:")
+            text.stylize("red", start)
 
 class CommandInput(Input):
     def __init__(self, disabled=False) -> None:
@@ -102,7 +121,8 @@ class MainScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._log_widget = Log()
+        self._log_widget = Log(highlight=True)
+        self._log_widget.highlighter = LogHighlighter()
         logger.set_log_widget(self._log_widget)
 
     def compose(self) -> ComposeResult:
@@ -187,15 +207,14 @@ async def main():
                     logger.info("Planner is now paused", "Server")
                     pause_completed_event.set()
                     app.update_pause_state()
-                
+
                 elif not pause_event.is_set() and pause_completed_event.is_set():
                     # Transition from manual command mode to autonomous planner mode
 
                     # Wait for robots to finish commands initiated during manual mode
                     for agent in robots.values():
-                        agent.clear_queue()
-                        if agent.current_action:
-                            agent.current_action.cancel()
+                        agent.stop_actions()
+
                     if len(robots.keys()) > 0: # wait fails if no robots are connected
                         await asyncio.wait([agent.ready_event.wait() for agent in robots.values()])
                     
@@ -220,17 +239,16 @@ async def main():
                         await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait()], return_when=asyncio.FIRST_COMPLETED)
                         continue 
 
-                    stop_robots_event = asyncio.Event()
-                    agent_tasks = [asyncio.create_task(agent.run(stop_robots_event)) for agent in robots.values()]
+                    agent_tasks = [asyncio.create_task(agent.run()) for agent in robots.values()]
                     # If agents are added or removed, stop right away and replan
                     agent_tasks.append(webserver.connections_updated_event.wait())
                     agent_tasks.append(pause_event.wait())
+                    agent_tasks.append(exit_event.wait())
                     # Let the agents run until one of them completes or requires a replan
                     await asyncio.wait(agent_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-                    stop_robots_event.set()
                     for agent in robots.values():
-                        agent.clear_queue()
+                        agent.stop_actions()
 
                 else:
                     await asyncio.sleep(0.1)
