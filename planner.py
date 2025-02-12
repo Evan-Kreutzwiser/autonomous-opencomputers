@@ -27,21 +27,6 @@ for item in items_list:
     )
 
 
-def _count_items(inventory: list[str, int]) -> dict[str, int]:
-    """
-    Robot inventory tracks individual slot contents, 
-    the planner just needs to know total quantities.
-    """
-    counts = {}
-    for item, quantity in inventory:
-        if item in counts:
-            counts[item] += quantity
-        else:
-            counts[item] = quantity
-
-    return counts
-
-
 def create_domain() -> Domain:
     robot = Variable("r", ("robot",))
     robot_inventory_functions = {inventory_functions[item]: None for item in items_list}
@@ -123,7 +108,7 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
     robot_objects = {id: Constant(f"robot_{id}", "robot") for id in robots.keys()}
 
     for robot in robots.values():
-        inventory = _count_items(robot.inventory)
+        inventory = robot.count_items()
         for item, quantity in inventory.items():
             if item not in items_list:
                 logger.info(f"Warning: Robot has item \"{item}\" (x{quantity}), which is not recognized by the planner!", robot.id)
@@ -135,7 +120,7 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
             initial_state.append(EqualTo(inventory_functions[missing_item](robot_objects[robot.id]), NumericValue(0)))
 
 
-    first_robot_id = list(robots.keys())[0]
+    first_robot_id = max(robots.keys())
     problem = Problem(
         "OpenComputersPlanner",
         domain=create_domain(),
@@ -170,6 +155,7 @@ def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
     if "Solution Found" in solution:
         lines = solution.split("\n")
         actions = []
+        has_tasks_for = set()
 
         # Interpretes POPF output to obtain the plan
         # Extraction will need changes if a different planner is used
@@ -185,6 +171,16 @@ def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
                 robot = int(terms.pop(1).split("_")[1])
                 # Other terms describe the action itself
                 actions.append((robot, terms))
+
+                logger.info(action_string, "Planner")
+                has_tasks_for.add(robot)
+
+        # Make robots without instructions wait for other robots to finish
+        # Mostly just required for the simple testing goals
+        for id in robots.keys():
+            if not id in has_tasks_for:
+                logger.info(f"Robot {id} not assigned tasks", "Planner")
+                actions.append((id, ["wait"]))
 
         return actions
     else:

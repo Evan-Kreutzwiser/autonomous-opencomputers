@@ -33,17 +33,25 @@ class Robot:
     async def run(self, stop_event: asyncio.Event):
         """Execute the event queue until completion, manually stopped, or an action fails."""
         self.ready_event.clear()
-        while not stop_event.is_set() and not self.action_queue.empty():
-            # Actions queued are in the form of a list of strings,
-            # where the first entry is the pddl function name and any further entries are arguments.
-            action_name, *args = self.action_queue.get()
-            self.current_action = _action_from_name(action_name, *args, robot=self)
-            success = await self.current_action.run(self)
-            self.current_action = None
-            if not success:
+        try:
+            while (not stop_event.is_set()) and (not self.action_queue.empty()):
+                # Actions queued are in the form of a list of strings,
+                # where the first entry is the pddl function name and any further entries are arguments.
+                action_name, *args = self.action_queue.get_nowait()
+                logger.info(f"Executing action {action_name} {args}", self.id)
+                self.current_action = _action_from_name(action_name, args, robot=self)
+                success = await self.current_action.run()
+
+                self.current_action = None
+                if not success:
+                    logger.error(f"Action {action_name} failed", self.id)
                 break
+        except Exception as e:
+            logger.exception(f"Error in robot action queue", e, self.id)
+        logger.error(f"Done action queue", self.id)
         self.ready_event.set()
 
+        
     def add_action(self, action):
         self.action_queue.put_nowait(action)
 
@@ -146,6 +154,21 @@ class Robot:
             item_name = convert_item_name(item["name"], item["dataValue"])
             inv[slot] = (item_name, item["count"])
 
+        self.inventory = inv
+        return True
+
+    def count_items(self) -> dict[str, int]:
+        """
+        Robot inventory tracks individual slot contents, 
+        the planner just needs to know total quantities.
+        """
+        counts = {}
+        for item, quantity in [slot for slot in self.inventory if slot is not None]:
+            if item in counts:
+                counts[item] += quantity
+            else:
+                counts[item] = quantity
+        return counts
         return True
 
     def __str__(self) -> str:
@@ -214,10 +237,10 @@ class SmeltAction(Action):
 def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
         item = action_name.split("_", 2)[-1]
-        return SmeltAction(robot, *args, item, True)
+        return SmeltAction(robot, item, True)
     elif action_name.startswith("smelt_partial_"):
         item = action_name.split("_", 2)[-1]
-        return SmeltAction(robot, *args, item, False)
+        return SmeltAction(robot, item, False)
     else:
         # No-Op
         return Action(robot)

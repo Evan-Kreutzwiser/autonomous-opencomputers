@@ -66,6 +66,7 @@ class InputContainer(HorizontalGroup):
         yield CommandInput(disabled=True)
         button = Button("Pause", action="pause")
         button.styles.width = 16
+        button.variant = "primary"
         yield button
 
     def action_pause(self):
@@ -83,11 +84,18 @@ class InputContainer(HorizontalGroup):
             self.query_one("Input").disabled = False
             self.query_one("Input").placeholder = "Send a command: <robot_id> <command>"
             self.query_one("Button").label = "Unpause"
+            self.query_one("Button").variant = "primary"
+            self.query_one("Button").disabled = False
         elif not pause_event.is_set():
             self.query_one("Input").disabled = True
             self.query_one("Input").placeholder = "Pause planner to send manual commands"
             self.query_one("Button").label = "Pause"
+            self.query_one("Button").variant = "primary"
+            self.query_one("Button").disabled = False
 
+        if pause_event.is_set() != pause_completed_event.is_set():
+            self.query_one("Button").variant = "default"
+            self.query_one("Button").disabled = True
 
 class MainScreen(Screen):
     AUTO_FOCUS = "Input"
@@ -116,6 +124,7 @@ class TerminalUI(App):
         self.push_screen(MainScreen())
 
     def update_pause_state(self):
+        """Alert the UI to changes in the pause event states for the planning loop"""
         self.query_one("InputContainer").update_pause_state()
 
 
@@ -123,19 +132,22 @@ def save_and_exit():
     # TODO: Save robot positions to disk before exiting
     exit(0)
 
-async def plan_actions(agents: dict[int, Robot]):
+async def plan_actions(agents: dict[int, Robot]) -> bool:
     """
     Plan the next set of actions for all robots, and add them to the agent's action queues.
+
+    :return: Whether the planner found a valid plan
     """
     # Ensure inventory contents are up to date
     await asyncio.wait([asyncio.create_task(agent.update_inventory()) for agent in agents.values()])
     
     actions = planner.replan(agents)
     if len(actions) == 0:
-        return
+        return False
     
     for robot_id, action in actions:
         agents[robot_id].add_action(action)
+    return True
 
 async def main():
     """
@@ -167,13 +179,15 @@ async def main():
                     while webserver.new_connections:
                         new_id = webserver.new_connections.pop()
                         robots[new_id] = Robot(new_id)
+                    webserver.connections_updated_event.clear()
 
                 if pause_event.is_set() and not pause_completed_event.is_set():
                     # Manual command mode
                     # Indicates to the UI that the planner is compltely paused now, and commands can be entered
                     logger.info("Planner is now paused", "Server")
                     pause_completed_event.set()
-
+                    app.update_pause_state()
+                
                 elif not pause_event.is_set() and pause_completed_event.is_set():
                     # Transition from manual command mode to autonomous planner mode
 
@@ -191,20 +205,28 @@ async def main():
 
                 elif not pause_event.is_set() and not pause_completed_event.is_set():
                     # Autonomous planner mode
+
                     if len(robots.keys()) == 0:
                         # Planning and waiting fails if no robots are connected, so just wait for a connection
-                        await asyncio.sleep(0.5)
+                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait()], return_when=asyncio.FIRST_COMPLETED)
                         continue
                     logger.info(f"Replanning with {len(robots.keys())} connected robots", "Server")
                     
-                    await plan_actions(robots)
+                    # Populate the action queues for each robot
+                    found_plan = await plan_actions(robots)
+                    if not found_plan:
+                        # If planning failed there is no way it will success again without new robots or manual intervention.
+                        # Only relavent during development and testing
+                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait()], return_when=asyncio.FIRST_COMPLETED)
+                        continue 
 
                     stop_robots_event = asyncio.Event()
                     agent_tasks = [asyncio.create_task(agent.run(stop_robots_event)) for agent in robots.values()]
                     # If agents are added or removed, stop right away and replan
                     agent_tasks.append(webserver.connections_updated_event.wait())
+                    agent_tasks.append(pause_event.wait())
                     # Let the agents run until one of them completes or requires a replan
-                    asyncio.wait(agent_tasks, return_when=asyncio.FIRST_COMPLETED)
+                    await asyncio.wait(agent_tasks, return_when=asyncio.FIRST_COMPLETED)
 
                     stop_robots_event.set()
                     for agent in robots.values():
