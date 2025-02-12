@@ -111,7 +111,7 @@ def create_domain() -> Domain:
     return domain
 
 
-def create_problem(robots: dict[Robot]) -> Problem:
+def create_problem(robots: dict[int, Robot]) -> Problem:
     """
     Create a PDDL problem from a dictionary of robots and their inventories.
     
@@ -151,7 +151,7 @@ def create_problem(robots: dict[Robot]) -> Problem:
     return problem
 
 
-def replan(robots: dict[Robot]) -> list[tuple[int, list[str]]]:
+def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
     """
     Determine which actions each robot should taek to contrstruct a new robot.
 
@@ -190,6 +190,7 @@ def replan(robots: dict[Robot]) -> list[tuple[int, list[str]]]:
     else:
         logger.error("No solution found.", "Planner")
         return []
+
 
 if __name__ == "__main__":
     domain = create_domain()

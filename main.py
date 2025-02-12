@@ -71,17 +71,22 @@ class InputContainer(HorizontalGroup):
     def action_pause(self):
         if pause_event.is_set() and pause_completed_event.is_set():
             pause_event.clear()
-            self.query_one("Input").disabled = True
-            self.query_one("Input").placeholder = "Pause planner to send manual commands"
-            self.query_one("Button").label = "Pause"
             logger.info("Resuming planner", "User")
         elif not pause_event.is_set():
             pause_event.set()
+            logger.info("Pausing planner - Please wait for currently running actions to complete", "User")
+
+        self.update_pause_state()
+
+    def update_pause_state(self):
+        if pause_event.is_set() or pause_completed_event.is_set():
             self.query_one("Input").disabled = False
             self.query_one("Input").placeholder = "Send a command: <robot_id> <command>"
-
             self.query_one("Button").label = "Unpause"
-            logger.info("Pausing planner - Please wait for currently running actions to complete", "User")
+        elif not pause_event.is_set():
+            self.query_one("Input").disabled = True
+            self.query_one("Input").placeholder = "Pause planner to send manual commands"
+            self.query_one("Button").label = "Pause"
 
 
 class MainScreen(Screen):
@@ -110,12 +115,15 @@ class TerminalUI(App):
     def on_ready(self):
         self.push_screen(MainScreen())
 
+    def update_pause_state(self):
+        self.query_one("InputContainer").update_pause_state()
+
 
 def save_and_exit():
     # TODO: Save robot positions to disk before exiting
     exit(0)
 
-async def plan_actions(agents: dict[Robot]):
+async def plan_actions(agents: dict[int, Robot]):
     """
     Plan the next set of actions for all robots, and add them to the agent's action queues.
     """
@@ -150,59 +158,65 @@ async def main():
     exit_event = asyncio.Event()
     async def event_loop():
         while not exit_event.is_set():
+            try:
+                # Check for connections / disconnections
+                if webserver.connections_updated_event.is_set():
+                    while webserver.removed_connections:
+                        removed_id = webserver.removed_connections.pop()
+                        robots.pop(removed_id)
+                    while webserver.new_connections:
+                        new_id = webserver.new_connections.pop()
+                        robots[new_id] = Robot(new_id)
 
-            # Check for connections / disconnections
-            if webserver.connections_updated_event.is_set():
-                while webserver.removed_connections:
-                    removed_id = webserver.removed_connections.pop()
-                    robots.pop(removed_id)
-                while webserver.new_connections:
-                    new_id = webserver.new_connections.pop()
-                    robots[new_id] = Robot(new_id)
+                if pause_event.is_set() and not pause_completed_event.is_set():
+                    # Manual command mode
+                    # Indicates to the UI that the planner is compltely paused now, and commands can be entered
+                    logger.info("Planner is now paused", "Server")
+                    pause_completed_event.set()
 
-            if pause_event.is_set() and not pause_completed_event.is_set():
-                # Manual command mode
-                # Indicates to the UI that the planner is compltely paused now, and commands can be entered
-                logger.info("Planner is now paused", "Server")
-                pause_completed_event.set()
+                elif not pause_event.is_set() and pause_completed_event.is_set():
+                    # Transition from manual command mode to autonomous planner mode
 
-            elif not pause_event.is_set() and pause_completed_event.is_set():
-                # Transition from manual command mode to autonomous planner mode
-
-                # Wait for robots to finish commands initiated during manual mode
-                if len(robots.keys()) > 0: # wait fails if no robots are connected
+                    # Wait for robots to finish commands initiated during manual mode
                     for agent in robots.values():
                         agent.clear_queue()
                         if agent.current_action:
                             agent.current_action.cancel()
+                    if len(robots.keys()) > 0: # wait fails if no robots are connected
+                        await asyncio.wait([agent.ready_event.wait() for agent in robots.values()])
+                    
+                    pause_completed_event.clear()
+                    app.update_pause_state()
+                    logger.info("Planner resumed", "Server")
 
-                    await asyncio.wait([agent.ready_event.wait() for agent in robots.values()])
-                pause_completed_event.clear()
-                logger.info("Planner resumed", "Server")
+                elif not pause_event.is_set() and not pause_completed_event.is_set():
+                    # Autonomous planner mode
+                    if len(robots.keys()) == 0:
+                        # Planning and waiting fails if no robots are connected, so just wait for a connection
+                        await asyncio.sleep(0.5)
+                        continue
+                    logger.info(f"Replanning with {len(robots.keys())} connected robots", "Server")
+                    
+                    await plan_actions(robots)
 
-            elif not pause_event.is_set() and not pause_completed_event.is_set():
-                # Autonomous planner mode
-                if len(robots.keys()) == 0:
-                    # Planning and waiting fails if no robots are connected, so just wait for a connection
-                    await asyncio.sleep(0.5)
-                    continue
-                logger.info(f"Replanning with {len(robots.keys())} connected robots", "Server")
-                
-                await plan_actions(robots)
+                    stop_robots_event = asyncio.Event()
+                    agent_tasks = [asyncio.create_task(agent.run(stop_robots_event)) for agent in robots.values()]
+                    # If agents are added or removed, stop right away and replan
+                    agent_tasks.append(webserver.connections_updated_event.wait())
+                    # Let the agents run until one of them completes or requires a replan
+                    asyncio.wait(agent_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-                stop_robots_event = asyncio.Event()
-                agent_tasks = [asyncio.create_task(agent.run(stop_robots_event)) for agent in robots.values()]
-                # If agents are added or removed, stop right away and replan
-                agent_tasks.append(webserver.connections_updated_event.wait())
-                # Let the agents run until one of them completes or requires a replan
-                asyncio.wait(agent_tasks, return_when=asyncio.FIRST_COMPLETED)
+                    stop_robots_event.set()
+                    for agent in robots.values():
+                        agent.clear_queue()
 
-                stop_robots_event.set()
-                for agent in robots.values():
-                    agent.clear_queue()
-
-            else:
-                await asyncio.sleep(0.1)
+                else:
+                    await asyncio.sleep(0.1)
+            
+            except Exception as exception:
+                logger.exception(f"Error in main loop", exception, "Server")
+                pause_event.set()
+                app.update_pause_state()
 
     main_task = asyncio.create_task(event_loop())
 
