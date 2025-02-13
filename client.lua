@@ -1,7 +1,7 @@
 local os = require("os")
 local botId = require("id")
 
-local clientVersion = "0.0.1"
+local clientVersion = "0.0.2"
 
 local sides = require("sides")
 local robot = require("robot")
@@ -101,6 +101,15 @@ local function receive()
 end
 
 
+local function acknowledge_or_error(success, error)
+  if success then
+    connection:write("{\"success\": true};")
+  else
+    connection:write("{\"success\": false, \"error\": \"" .. error .. "\"};")
+  end
+end
+
+
 local function move(command)
   -- Main loop will flush written response after returning
   local success, reason = false, "Invalid or missing direction"
@@ -123,11 +132,7 @@ local function move(command)
     robot.turnLeft()
   end
 
-  if success then
-    connection:write("{\"success\": true};")
-  else
-    connection:write("{\"success\": false, \"error\": \"" .. reason .. "\"};")
-  end
+  acknowledge_or_error(success, reason)
 end
 
 
@@ -170,31 +175,51 @@ local function loop()
 
       elseif command[1] == "use" then
         local sneaky = command[2] == "true"
-        local success, reason = robot.use(sides.front, sneaky)
+        local success, action_type = robot.use(sides.front, sneaky)
         if success then
-          connection:write("{\"success\": true};")
+          connection:write("{\"success\": true, \"action\": \"" .. action_type .. "\"};")
         else
-          connection:write("{\"success\": false, \"error\": \"" .. reason .. "\"};")
+          connection:write("{\"success\": false, \"error\": \"No action taken\"};")
         end
         
       elseif command[1] == "insert" then
-
         local robot_slot = command[2]
         local dest_slot = command[3]
         local count = tonumber(command[4] or 1)
 
         if not robot_slot or not dest_slot then
           connection:write("{\"success\": false, \"error\": \"Missing slot argument\"};")
-        else 
+        else
           robot_slot = tonumber(robot_slot)
           dest_slot = tonumber(dest_slot)
           robot.select(robot_slot)
           local success, reason = inv_controller.dropIntoSlot(sides.front, dest_slot, count)
-          if success then
-            connection:write("{\"success\": true};")
-          else
-            connection:write("{\"success\": false, \"error\": \"" .. reason .. "\"};")
-          end
+          acknowledge_or_error(success, reason)
+        end
+
+      elseif command[1] == "select" then
+        local slot = tonumber(command[2])
+        if not slot then
+          connection:write("{\"success\": false, \"error\": \"Missing slot argument\"};")
+        elseif slot > robot.inventorySize() then
+          connection:write("{\"success\": false, \"error\": \"Slot out of bounds\"};")
+        end
+        robot.select(slot)
+        connection:write("{\"success\": true};")
+
+      elseif command[1] == "transfer" then
+        local source_slot = tonumber(command[2])
+        local dest_slot = tonumber(command[3])
+        local count = tonumber(command[4])
+
+        if not source_slot or not dest_slot then
+          connection:write("{\"success\": false, \"error\": \"Invalid or missing slot argument\"};")
+        elseif source_slot > robot.inventorySize() or dest_slot > robot.inventorySize() then
+          connection:write("{\"success\": false, \"error\": \"Source or destination out of bounds\"};")
+        else
+          robot.select(source_slot)
+          robot.transferTo(dest_slot, count)
+          connection:write("{\"success\": true};")
         end
 
       elseif command[1] == "inventory" then
@@ -218,11 +243,7 @@ local function loop()
 
         local count = tonumber(command[2])
         local success = crafting.craft(count);
-        if success then
-          connection:write("{\"success\": true};")
-        else
-          connection:write("{\"success\": false, \"error\": \"Failed to craft item\"};")
-        end
+        acknowledge_or_error(success, "Recipe invalid")
 
       elseif command[1] == "reboot" then
         computer.shutdown(true)
@@ -250,6 +271,7 @@ local function loop()
         connection:flush()
         connection:close()
         exit = true
+
       else
         connection:write(toJson({success = false, error = " Unknown command: " .. command[1] }))
       end

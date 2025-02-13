@@ -3,14 +3,24 @@ import json
 from typing import Literal
 import logger
 from recipes import convert_item_name
+import recipes
 import webserver
 
 
 class Robot:
     """
-    Abstraction around robot commands.
-
     Represents a robot in the minecraft world and tracks its long term state.
+
+    Attributes:
+    id: int
+        The robot's unique identifier, stored on the robot itself to aid in restoring state.
+    inventory: list
+        A list of item name and quantity pairs, representing the robot's inventory.
+        The list is 1-indexed, with an extra unusable None in position 0.
+    position: tuple
+        The in-world position of the robot. It has no native coordinate access, so this is tracked manually.
+    direction: str
+        The cardinal direction the robot is facing. Not natively readable, so this is tracked manually.
     """
 
     id: int
@@ -30,15 +40,15 @@ class Robot:
         self.ready_event = asyncio.Event()
         self.ready_event.set()
 
-    async def run(self, stop_event: asyncio.Event):
+    async def run(self):
         """Execute the event queue until completion, manually stopped, or an action fails."""
         self.ready_event.clear()
         try:
-            while (not stop_event.is_set()) and (not self.action_queue.empty()):
+            while not self.action_queue.empty():
                 # Actions queued are in the form of a list of strings,
                 # where the first entry is the pddl function name and any further entries are arguments.
                 action_name, *args = self.action_queue.get_nowait()
-                logger.info(f"Executing action {action_name} {args}", self.id)
+                logger.info(f"Executing action {action_name} {args or ''}", self.id)
                 self.current_action = _action_from_name(action_name, args, robot=self)
                 success = await self.current_action.run()
 
@@ -48,17 +58,21 @@ class Robot:
                 break
         except Exception as e:
             logger.exception(f"Error in robot action queue", e, self.id)
-        logger.error(f"Done action queue", self.id)
         self.ready_event.set()
 
-        
     def add_action(self, action):
         self.action_queue.put_nowait(action)
 
-    def clear_queue(self):
+    def stop_actions(self):
+        """
+        Cause the robot to stop as soon as possible. Current action will either finish
+        or exit at its earliest convience, and all further actions are cancelled.
+        """
         self.action_queue = asyncio.Queue()
+        if self.current_action:
+            self.current_action.cancel()
 
-    async def _move(self, side: Literal["front", "left", "right", "back", "up", "down"]) -> bool:
+    async def move(self, side: Literal["front", "left", "right", "back", "up", "down"]) -> bool:
         if side not in ["front", "left", "right", "back", "up", "down"]:
             logger.error(f"Invalid side for movement: {side}", self.id)
             return False
@@ -96,7 +110,7 @@ class Robot:
 
         return True
 
-    async def _turn_to_face(self, direction: str) -> bool:
+    async def turn_to_face(self, direction: str) -> bool:
         """Turn to face one of the caridinal directions."""
         if direction not in ["north", "east", "south", "west"]:
             logger.error(f"Invalid direction: {direction}", self.id)
@@ -111,7 +125,7 @@ class Robot:
         else:
             return await self.turn_left() and await self.turn_left()
 
-    async def _turn_left(self) -> bool:
+    async def turn_left(self) -> bool:
         response = await webserver.send_command(self.id, f"turn left")
         data = json.loads(response)
         if not data["success"]:
@@ -121,7 +135,7 @@ class Robot:
         self.direction = left_of(self.direction)
         return True
 
-    async def _turn_right(self) -> bool:
+    async def turn_right(self) -> bool:
         response = await webserver.send_command(self.id, f"turn right")
         data = json.loads(response)
         if not data["success"]:
@@ -143,7 +157,7 @@ class Robot:
             logger.error(f"Update Inventory: {data['error']}", self.id)
             return False
 
-        inv = [None] * data["size"]
+        inv = [None] * data["size"] + 1
 
         for slot, item in data["inventory"].items():
             # Lua is 1-indexed, Python is 0-indexed
@@ -169,6 +183,49 @@ class Robot:
             else:
                 counts[item] = quantity
         return counts
+
+    def first_empty_slot(self, exclude_crafting_grid=False) -> int:
+        """
+        Return the index of the first empty slot in the robot's inventory.
+        If exclude_crafting_grid is True, the 3x3 area in the top left of the inventory is ignored.
+        """
+        for i, slot in enumerate(self.inventory[1:]):
+            # Inventory renders as 4 columns, and only the first 3 cells in each row are part of the crafting grid.
+            if slot is None and not (exclude_crafting_grid and i < 12 and i%4 < 3):
+                return i
+        return -1
+
+    def find_item(self, item: str, exclude_crafting_grid=False) -> int:
+        """
+        Return the index of the first slot containing the specified item.
+        If exclude_crafting_grid is True, the 3x3 area in the top left of the inventory is ignored.
+        """
+        for i, slot in enumerate(self.inventory[1:]):
+            if slot and slot[0] == item and not (exclude_crafting_grid and i < 12 and i%4 < 3):
+                return i
+        return -1
+
+    async def transfer_items(self, source_slot: int, dest_slot: int, quantity: int = None) -> bool:
+        """
+        Transfer items from one inventory slot to another.
+        Automatically updates tracked inventory state if successful.
+
+        If quantity is not specified, transfer all items in the stack.
+        """
+        logger.info(f"Transferring {quantity or 'all'} items from slot {source_slot} to slot {dest_slot}", self.id)
+        response = await webserver.send_command(self.id, f"transfer {source_slot+1} {dest_slot+1} {quantity or ''}")
+        data = json.loads(response)
+        logger.info(f"Transfer: {data}", self.id)
+        if not data["success"]:
+            logger.error(f"Transfer: {data['error']}", self.id)
+            return False
+
+        if quantity is None:
+            # Swap slots to remain consistent with the robot's inventory state
+            # Aviods an expensive inventory syncronization
+            self.inventory[source_slot], self.inventory[dest_slot] = self.inventory[dest_slot], self.inventory[source_slot]
+        else:
+            await self.update_inventory()
         return True
 
     def __str__(self) -> str:
@@ -194,7 +251,7 @@ class Action:
         """
         return True
 
-    async def cancel(self):
+    def cancel(self):
         self.cancel_event.set()
 
 
@@ -208,6 +265,73 @@ class PingAction(Action):
             logger.error(f"Ping: {data['error']}", self.robot.id)
             return False
 
+        return True
+
+
+class WaitAction(Action):
+    """For the cases when the planner did not assign a robot a task."""
+    
+    async def run(self) -> bool:
+        """Continue until manually cancelled by the planning loop or user."""
+        await self.cancel_event.wait()
+        return True
+
+
+class CraftAction(Action):
+    """Craft an item using the robot's crafting upgrade."""
+
+    def __init__(self, robot: Robot, item: str):
+        super().__init__(robot)
+        self.item = item
+
+    async def run(self) -> bool:
+        # TODO: Syncing inventories is slow, so we should only do it when necessary
+        await self.robot.update_inventory()
+
+        # Check if the robot has the required materials
+        required_items = recipes.recipe_ingredients[self.item]
+        items = self.robot.count_items()
+        for ingredient, quantity in required_items.items():
+            if ingredient not in items or items[ingredient] < quantity:
+                logger.error(f"Missing {ingredient} required to craft {self.item}", self.robot.id)
+                return False
+
+        # Empty the crafting grid
+        for i in range(12):
+            logger.info(f"Slot {i} of inventory: {self.robot.inventory[i]}", self.robot.id)
+            if i % 4 < 3 and (self.robot.inventory[i] is not None):
+                dest_index = self.robot.first_empty_slot(exclude_crafting_grid=True)
+                logger.info(f"Emptying crafting grid slot {i} to {dest_index}", self.robot.id)
+                success = await self.robot.transfer_items(i, dest_index)
+                if not success:
+                    logger.error(f"Failed to clear crafting grid (slot {i})", self.robot.id)
+                    return False
+        
+        # Place the ingredients in the correct slots for crafting
+        recipe_data = recipes.recipes[self.item]
+        for row in range(3):
+            for col in range(3):
+                ingredient = recipe_data["recipe"][row][col]
+                if ingredient:
+                    source_index = self.robot.find_item(ingredient, exclude_crafting_grid=True)
+                    dest_index = row*4 + col # Crafting grid uses 3 of the 4 columns in the inventory grid
+                    success = await self.robot.transfer_items(source_index, dest_index, 1)
+                    if not success:
+                        logger.error(f"Failed to place {ingredient} in crafting grid", self.robot.id)
+                        return False
+
+        # Craft the item
+        dest_slot = self.robot.find_item(self.item, exclude_crafting_grid=True)
+        dest_slot = 0 if dest_slot == -1 else dest_slot
+        await webserver.send_command(self.robot.id, f"select {dest_slot + 1}")
+        response = await webserver.send_command(self.robot.id, "craft")
+        data = json.loads(response)
+        if not data["success"]:
+            logger.error(f"Failed to craft {self.item}: {data['error']}", self.robot.id)
+            return False
+
+        # TODO: Probably don't need this since anywhere that accesses it already refreshes first
+        await self.robot.update_inventory()
         return True
 
 
@@ -241,6 +365,11 @@ def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action
     elif action_name.startswith("smelt_partial_"):
         item = action_name.split("_", 2)[-1]
         return SmeltAction(robot, item, False)
+    elif action_name.startswith("craft_"):
+        item = action_name.split("_", 1)[-1]
+        return CraftAction(robot, item)
+    elif action_name == "wait":
+        return WaitAction(robot)
     else:
         # No-Op
         return Action(robot)
