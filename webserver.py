@@ -44,7 +44,7 @@ async def send_command(bot_id: int, message: str) -> str:
     connection = connections.get(bot_id)
     if not connection:
         logger.error(f"Failed to send command ({message}): Bot not connected", bot_id)
-        return ""
+        return "{\"success\": false, \"error\": \"Robot not connected\"}"
     reader, writer = connection
 
     try:
@@ -54,7 +54,7 @@ async def send_command(bot_id: int, message: str) -> str:
             logger.error(f"Failed to send command ({message}): No response", bot_id)
             writer.close()
             _disconnect(bot_id)
-            return ""
+            return "{\"success\": false, \"error\": \"Robot disconnected\"}"
         else:
             return message
 
@@ -62,12 +62,12 @@ async def send_command(bot_id: int, message: str) -> str:
         logger.error(f"Failed to send command ({message}): Connection reset", bot_id)
         writer.close()
         _disconnect(bot_id)
-        return ""
+        return "{\"success\": false, \"error\": \"Robot disconnected\"}"
     except ConnectionAbortedError:
         logger.error(f"Failed to send command ({message}): Connection aborted by host", bot_id)
         writer.close()
         _disconnect(bot_id)
-        return ""
+        return "{\"success\": false, \"error\": \"Robot disconnected\"}"
     
     except UnicodeDecodeError:
         logger.error(f"Response encoding incorrect for command ({message})", bot_id)
