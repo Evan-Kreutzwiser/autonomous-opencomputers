@@ -227,7 +227,7 @@ async def main():
 
                     if len(robots.keys()) == 0:
                         # Planning and waiting fails if no robots are connected, so just wait for a connection
-                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait()], return_when=asyncio.FIRST_COMPLETED)
+                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait(), exit_event.wait()], return_when=asyncio.FIRST_COMPLETED)
                         continue
                     logger.info(f"Replanning with {len(robots.keys())} connected robots", "Server")
                     
@@ -236,7 +236,7 @@ async def main():
                     if not found_plan:
                         # If planning failed there is no way it will success again without new robots or manual intervention.
                         # Only relavent during development and testing
-                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait()], return_when=asyncio.FIRST_COMPLETED)
+                        await asyncio.wait([pause_event.wait(), webserver.connections_updated_event.wait(), exit_event.wait()], return_when=asyncio.FIRST_COMPLETED)
                         continue 
 
                     agent_tasks = [asyncio.create_task(agent.run()) for agent in robots.values()]
@@ -251,7 +251,7 @@ async def main():
                         agent.stop_actions()
 
                 else:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(1)
             
             except Exception as exception:
                 logger.exception(f"Error in main loop", exception, "Server")
@@ -264,6 +264,7 @@ async def main():
     # Try to prevent a bug where logging after the UI is closed causes an error
     logger.set_log_widget(None)
 
+    logger.info("Exiting - Please wait for current tasks for finish", "Server")
     exit_event.set()
     await main_task
 
