@@ -542,6 +542,25 @@ for item, data in recipes.items():
         if ingredient not in items_list:
             logger.info(f"Warning: Ingredient {ingredient} not in items_list", "Server")
 
+stack_size: dict[str, int] = {}
+
+for item in items_list:
+    if item in [
+        "wooden_pickaxe",
+        "stone_pickaxe",
+        "iron_pickaxe",
+        "diamond_pickaxe",
+        "analyzer",
+        "eeprom",
+        "floppy_disk",
+        "hard_drive_tier_1",
+        "hard_drive_tier_2",
+        "hard_drive_tier_3",
+        "robot",
+    ]:
+        stack_size[item] = 1
+    else:
+        stack_size[item] = 64
 
 def convert_item_name(name: str, data_value: int) -> str:
     """
