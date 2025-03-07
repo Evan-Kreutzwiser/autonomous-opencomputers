@@ -32,7 +32,7 @@ cd autonomous-opencomputers
 ```sh
 pip install -r requirements.txt
 planutils setup
-planutils install popf
+planutils install enhsp
 ```
 
 3. Configure Minecraft

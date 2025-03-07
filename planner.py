@@ -327,7 +327,7 @@ def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
         actions = []
         has_tasks_for = set()
 
-        # Interpretes POPF output to obtain the plan
+        # Interpretes enhsp output to obtain the plan
         # Extraction will need changes if a different planner is used
         # TODO: Surely somewhere theres a planner that can handle 
         # numeric fluents and output in a structure format?
