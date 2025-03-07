@@ -12,11 +12,11 @@ In the context of the course, automated planning revolves around the use of PDDL
 
 ### Probabilistic Inference
 
-Not yet started. Probabilistic inference will be used in a behavior-modelling context to influence sharing between robots, based on how effective it is deemed to share vs. collecting resources independently in an environment that can't be completely observed.
+Not yet started. Probabilistic inference will be used in a behavior-modelling context to determine optimal mining depth and influence sharing between robots, based on how effective it is deemed to share vs. collecting resources independently in an environment that can't be completely observed. This portion of the project will not introduce any robot behavior on it's own, but rather tie into the other 2 portions to optimize the robots' activity.
 
 ### Deep Learning
 
-Not yet started. The goal is to train an AI model using PyTorch to control robots when mining using volumetric block hardness scans from the geolyzer to locate ores and pathfind through caves. 
+This portion of the project has just been started. The intent is to train a Deep Q Network using PyTorch to control robots when mining, using volumetric block hardness scans from the geolyzer to locate ores and pathfind through caves. Training takes place in a rough python recreation of the game world, so that training is not limited to 1 robot at game-speed. The model will later be modified to additionally take in the distance from the optimal depth determined by the probabilistic inference section, with a utility function that encourrages staying close to that depth while mining.
 
 ## Installation
 
