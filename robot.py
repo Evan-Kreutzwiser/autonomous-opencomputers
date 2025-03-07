@@ -55,7 +55,7 @@ class Robot:
                 self.current_action = None
                 if not success:
                     logger.error(f"Action {action_name} failed", self.id)
-                break
+                    break
         except Exception as e:
             logger.exception(f"Error in robot action queue", e, self.id)
         self.ready_event.set()
@@ -157,11 +157,11 @@ class Robot:
             logger.error(f"Update Inventory: {data['error']}", self.id)
             return False
 
-        inv = [None] * data["size"] + 1
+        # Inventory is 1-indexed in Lua
+        inv = [None] * (data["size"] + 1)
 
         for slot, item in data["inventory"].items():
-            # Lua is 1-indexed, Python is 0-indexed
-            slot = int(slot) - 1
+            slot = int(slot)
             # Many modded items in-game share the same ID due to a hard cap 
             # on the number of valid IDs in old Minecraft versions.
             # These items are differentiated by their data value.
@@ -192,7 +192,7 @@ class Robot:
         for i, slot in enumerate(self.inventory[1:]):
             # Inventory renders as 4 columns, and only the first 3 cells in each row are part of the crafting grid.
             if slot is None and not (exclude_crafting_grid and i < 12 and i%4 < 3):
-                return i
+                return i+1
         return -1
 
     def find_item(self, item: str, exclude_crafting_grid=False) -> int:
@@ -202,7 +202,7 @@ class Robot:
         """
         for i, slot in enumerate(self.inventory[1:]):
             if slot and slot[0] == item and not (exclude_crafting_grid and i < 12 and i%4 < 3):
-                return i
+                return i+1
         return -1
 
     async def transfer_items(self, source_slot: int, dest_slot: int, quantity: int = None) -> bool:
@@ -210,22 +210,46 @@ class Robot:
         Transfer items from one inventory slot to another.
         Automatically updates tracked inventory state if successful.
 
-        If quantity is not specified, transfer all items in the stack.
+        - If quantity is not specified, transfer all items in the stack if possible.
+        - When the source slot is empty, nothing happens. 
+        - When the destination is empty the operation succeeds
+        - If both stacks are the same item type, attempt to move as many as possible
+        - If the stacks are different and no quantity was given, swap them
+        - If a quantity was given but both stacks are present and different, nothing happens
         """
-        logger.info(f"Transferring {quantity or 'all'} items from slot {source_slot} to slot {dest_slot}", self.id)
-        response = await webserver.send_command(self.id, f"transfer {source_slot+1} {dest_slot+1} {quantity or ''}")
+        response = await webserver.send_command(self.id, f"transfer {source_slot} {dest_slot} {quantity or ''}")
         data = json.loads(response)
-        logger.info(f"Transfer: {data}", self.id)
         if not data["success"]:
             logger.error(f"Transfer: {data['error']}", self.id)
             return False
 
-        if quantity is None:
-            # Swap slots to remain consistent with the robot's inventory state
-            # Aviods an expensive inventory syncronization
-            self.inventory[source_slot], self.inventory[dest_slot] = self.inventory[dest_slot], self.inventory[source_slot]
-        else:
-            await self.update_inventory()
+        source_stack = self.inventory[source_slot]
+        dest_stack = self.inventory[dest_slot]
+        # TODO: Thoroughly verify correctness
+        # Simulate the action taken by the command on the robot to maintain consistent
+        # inventory state without making the expensive call to update_inventory.
+        if dest_stack is None:
+            if quantity is None or quantity > source_stack[1]:
+                self.inventory[dest_slot] = source_stack
+                self.inventory[source_slot] = None
+            else:
+                self.inventory[source_slot] = (source_stack[0], source_stack[1] - quantity)
+                self.inventory[dest_slot] = (source_stack[0], quantity)
+
+        elif source_stack is not None:
+            if quantity is None and source_stack[0] != dest_stack[0]:
+                self.inventory[source_slot], self.inventory[dest_slot] = dest_stack, source_stack
+
+            if source_stack[0] == dest_stack[0]:
+                remaining_space = recipes.stack_size.get(dest_stack[0], 64) - dest_stack[1]
+                amount_to_move = min(quantity or source_stack[1], source_stack[1])
+                if remaining_space >= amount_to_move:
+                    self.inventory[dest_slot][1] += amount_to_move
+                    self.inventory[source_slot] = None
+                else:
+                    self.inventory[dest_slot][1] += amount_to_move
+                    self.inventory[source_slot][1] -= amount_to_move
+        # elif source_stack is None: no-op
         return True
 
     def __str__(self) -> str:
@@ -297,14 +321,12 @@ class CraftAction(Action):
                 return False
 
         # Empty the crafting grid
-        for i in range(12):
-            logger.info(f"Slot {i} of inventory: {self.robot.inventory[i]}", self.robot.id)
-            if i % 4 < 3 and (self.robot.inventory[i] is not None):
+        for i in range(1, 13):
+            if (i-1) % 4 < 3 and (self.robot.inventory[i] is not None):
                 dest_index = self.robot.first_empty_slot(exclude_crafting_grid=True)
-                logger.info(f"Emptying crafting grid slot {i} to {dest_index}", self.robot.id)
                 success = await self.robot.transfer_items(i, dest_index)
                 if not success:
-                    logger.error(f"Failed to clear crafting grid (slot {i})", self.robot.id)
+                    logger.error(f"Failed to clear crafting grid (moving slot {i} to {dest_index})", self.robot.id)
                     return False
         
         # Place the ingredients in the correct slots for crafting
@@ -314,7 +336,7 @@ class CraftAction(Action):
                 ingredient = recipe_data["recipe"][row][col]
                 if ingredient:
                     source_index = self.robot.find_item(ingredient, exclude_crafting_grid=True)
-                    dest_index = row*4 + col # Crafting grid uses 3 of the 4 columns in the inventory grid
+                    dest_index = row*4 + (col+1) # Crafting grid uses 3 of the 4 columns in the inventory grid
                     success = await self.robot.transfer_items(source_index, dest_index, 1)
                     if not success:
                         logger.error(f"Failed to place {ingredient} in crafting grid", self.robot.id)
@@ -322,8 +344,8 @@ class CraftAction(Action):
 
         # Craft the item
         dest_slot = self.robot.find_item(self.item, exclude_crafting_grid=True)
-        dest_slot = 0 if dest_slot == -1 else dest_slot
-        await webserver.send_command(self.robot.id, f"select {dest_slot + 1}")
+        dest_slot = 1 if dest_slot == -1 else dest_slot
+        await webserver.send_command(self.robot.id, f"select {dest_slot}")
         response = await webserver.send_command(self.robot.id, "craft")
         data = json.loads(response)
         if not data["success"]:
