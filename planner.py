@@ -173,6 +173,7 @@ def create_domain() -> Domain:
         # Add the output item to this robot's inventory
         if stack_size[item] > 1:
             crafting_effects.append(Increase(partial_stack_functions[item](robot), NumericValue(recipes[item]["output"])))
+            crafting_effects.append(should_update_item[item](robot))
         else:
             crafting_effects.append(Increase(non_stackable_items_functions[item](robot), NumericValue(1)))
             crafting_effects.append(Decrease(inventory_slots_used_function(robot), NumericValue(1)))
