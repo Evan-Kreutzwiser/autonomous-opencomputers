@@ -161,7 +161,7 @@ async def plan_actions(agents: dict[int, Robot]) -> bool:
     # Ensure inventory contents are up to date
     await asyncio.wait([asyncio.create_task(agent.update_inventory()) for agent in agents.values()])
     
-    actions = planner.replan(agents)
+    actions = await planner.replan(agents)
     if len(actions) == 0:
         return False
     

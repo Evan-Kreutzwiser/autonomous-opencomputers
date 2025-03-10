@@ -18,10 +18,10 @@ from pddl.logic.functions import (
 from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
+import asyncio
 import logger
 from recipes import recipe_ingredients, recipes, items_list, stack_size
 from robot import Robot
-import subprocess
 
 types = {"robot": "object"}
 robot_variable = Variable("r", ("robot",))
@@ -309,7 +309,7 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
     return problem
 
 
-def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
+async def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
     """
     Determine which actions each robot should taek to contrstruct a new robot.
 
@@ -318,7 +318,16 @@ def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
     problem = create_problem(robots)
     open("problem.pddl", "w").write(str(problem))
 
-    output = subprocess.run("planutils run enhsp \"-o domain.pddl\" \"-f problem.pddl\"", capture_output=True, text=True, shell=True).stdout
+    async def run_planner():
+        process = await asyncio.create_subprocess_shell(
+            "planutils run enhsp \"-o domain.pddl\" \"-f problem.pddl\"",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        return stdout.decode()
+
+    output = await run_planner()
 
 
     if "Found Plan" in output:
@@ -384,5 +393,6 @@ if __name__ == "__main__":
     # but would need a way to get it through to the planner's container
     open("problem.pddl", "w").write(str(problem))
 
-    plan = replan({1: robot})
-    print("\n".join([action[0] for action in plan]))
+    
+    plan = asyncio.run(replan({1: robot}))
+    # replan function logs actions taken to terminal
