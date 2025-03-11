@@ -19,6 +19,7 @@ from pddl.core import Domain, Problem, Formula
 from pddl.action import Action
 from pddl.requirements import Requirements
 import asyncio
+from datetime import datetime
 import logger
 from recipes import recipe_ingredients, recipes, items_list, stack_size
 from robot import Robot
@@ -176,7 +177,7 @@ def create_domain() -> Domain:
             crafting_effects.append(should_update_item[item](robot))
         else:
             crafting_effects.append(Increase(non_stackable_items_functions[item](robot), NumericValue(1)))
-            crafting_effects.append(Decrease(inventory_slots_used_function(robot), NumericValue(1)))
+            crafting_effects.append(Increase(inventory_slots_used_function(robot), NumericValue(1)))
 
         # Consume crafting ingredients
         for ingredient, amount in current_recipe.items():
@@ -201,39 +202,88 @@ def create_domain() -> Domain:
             )
         )
 
-    # for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold"), ("raw_circuit", "circuit")]:
-    #     actions.append(Action(
-    #         f"smelt_8_{ore}",
-    #         parameters=[robot],
-    #         precondition=And(
-    #             GreaterEqualThan(inventory_functions[ore](robot), NumericValue(8)),
-    #             GreaterEqualThan(inventory_functions["coal"](robot), NumericValue(1))
-    #         ),
-    #         effect=And(
-    #             Decrease(inventory_functions[ore](robot), NumericValue(8)),
-    #             Increase(inventory_functions[cooked](robot), NumericValue(8)),
-    #             Decrease(inventory_functions["coal"](robot), NumericValue(1))
-    #         )
-    #     ))
+    for ore, cooked in [("iron_ore", "iron"), ("gold_ore", "gold"), ("raw_circuit", "circuit")]:
+        # Smelting 8 items at a time makes efficient use of fuel
+        actions.append(Action(
+            f"smelt_8_{ore}",
+            parameters=[robot],
+            precondition=And(
+                Or(
+                    GreaterEqualThan(partial_stack_functions["coal"](robot), NumericValue(1)),
+                    GreaterEqualThan(full_stack_functions["coal"](robot), NumericValue(1))
+                ),
+                Or(
+                    GreaterEqualThan(partial_stack_functions[ore](robot), NumericValue(8)),
+                    GreaterEqualThan(full_stack_functions[ore](robot), NumericValue(1))
+                ),
+                GreaterEqualThan(partial_stack_functions["furnace"](robot), NumericValue(1))
+                ),
+            effect=And(
+                Decrease(partial_stack_functions[ore](robot), NumericValue(8)),
+                Increase(partial_stack_functions[cooked](robot), NumericValue(8)),
+                Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
+                should_update_item[ore](robot), should_update_item["coal"](robot), should_update_item[cooked](robot), 
+                should_update_item_stacks
+            )
+        ))
 
-    #     actions.append(Action(
-    #         f"smelt_partial_{ore}",
-    #         parameters=[robot],
-    #         precondition=And(
-    #             GreaterEqualThan(inventory_functions["coal"](robot), NumericValue(1)),
-    #             GreaterEqualThan(inventory_functions[ore](robot), NumericValue(1)),
-    #             LesserEqualThan(inventory_functions[ore](robot), NumericValue(8))
-    #         ),
-    #         effect=And(
-    #             Decrease(inventory_functions["coal"](robot), NumericValue(1)),
-    #             Increase(inventory_functions[cooked](robot), inventory_functions[ore](robot)),
-    #             Assign(inventory_functions[ore](robot), NumericValue(0)),
-    #             # effects.When(
-    #             #     EqualTo(inventory_functions["coal"](robot), NumericValue(0)),
-    #             # ),
+        # In the event that we don't have enough unprocessed items, allow the fuel ticks to be wasted
+        actions.append(Action(
+            f"smelt_partial_{ore}",
+            parameters=[robot],
+            precondition=And(
+                Or(
+                    GreaterEqualThan(partial_stack_functions["coal"](robot), NumericValue(1)),
+                    GreaterEqualThan(full_stack_functions["coal"](robot), NumericValue(1))
+                ),
+                GreaterThan(partial_stack_functions[ore](robot), NumericValue(0)),
+                LesserThan(partial_stack_functions[ore](robot), NumericValue(8)),
+                EqualTo(full_stack_functions[ore](robot), NumericValue(0)),
+                GreaterEqualThan(partial_stack_functions["furnace"](robot), NumericValue(1))
+            ),
+            effect=And(
+                Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
+                Increase(partial_stack_functions[cooked](robot), partial_stack_functions[ore](robot)),
+                Assign(partial_stack_functions[ore](robot), NumericValue(0)),
+                Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                should_update_item[cooked](robot), should_update_item["coal"](robot), should_update_item_stacks
+            )
+        ))
 
-    #         )
-    #     ))
+    # Drop items on the ground to open up inventory space
+    for item in items_list:
+        if stack_size[item] > 1:
+            # Stackable items (Can discard either a full stack or the partial stack)
+            actions.append(Action(
+                f"discard_{item}_partial",
+                parameters=[robot],
+                precondition=GreaterEqualThan(partial_stack_functions[item](robot), NumericValue(0)),
+                effect=And(
+                    Assign(partial_stack_functions[item](robot), NumericValue(0)),
+                    Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                ),
+            ))
+            actions.append(Action(
+                f"discard_{item}_stack",
+                parameters=[robot],
+                precondition=GreaterEqualThan(full_stack_functions[item](robot), NumericValue(0)),
+                effect=And(
+                    Decrease(full_stack_functions[item](robot), NumericValue(1)),
+                    Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                ),
+            ))
+        else:
+            # Non stackable items
+            actions.append(Action(
+                f"discard_one_{item}",
+                parameters=[robot],
+                precondition=GreaterEqualThan(non_stackable_items_functions[item](robot), NumericValue(0)),
+                effect=And(
+                    Decrease(non_stackable_items_functions[item](robot), NumericValue(1)),
+                    Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                )
+            ))
+
 
     domain = Domain(
         "OpenComputersDomain",
@@ -327,10 +377,15 @@ async def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
         stdout, stderr = await process.communicate()
         return stdout.decode()
 
+    start_time = datetime.now()
     output = await run_planner()
 
+    end_time = datetime.now()
+    duration = end_time - start_time
 
     if "Found Plan" in output:
+        logger.info(f"Found plan in {duration.total_seconds()%.2} seconds", "Planner")
+
         solution = output.split("Found Plan")[1]
 
         lines = solution.split("\n")
@@ -364,7 +419,7 @@ async def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
 
         return actions
     else:
-        logger.error("No solution found.", "Planner")
+        logger.error(f"No solution found (Processed for {duration.total_seconds()%.2} seconds).", "Planner")
         return []
 
 
