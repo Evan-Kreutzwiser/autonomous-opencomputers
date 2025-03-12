@@ -15,7 +15,7 @@ from pddl.logic.functions import (
     Plus,
     Minus,
 )
-from pddl.core import Domain, Problem, Formula
+from pddl.core import Domain, Problem, Formula, Metric
 from pddl.action import Action
 from pddl.requirements import Requirements
 import asyncio
@@ -60,6 +60,7 @@ inventory_slots_used_function = NumericFunction("robot_inventory_slots_used", ro
 should_update_item = {item: Predicate(f"should_update_{item}", robot_variable) for item in full_stack_functions.keys()}
 should_update_item_stacks = Predicate("should_update_item_stacks", robot_variable)
 
+cost_function = NumericFunction("cost", robot_variable)
 
 def create_domain() -> Domain:
     robot = robot_variable
@@ -198,7 +199,11 @@ def create_domain() -> Domain:
                     has_9_free_slots(robot),
                     *recipe_preconditions,
                 ),
-                effect=And(should_update_item_stacks, *crafting_effects),
+                effect=And(
+                    should_update_item_stacks,
+                    *crafting_effects,
+                    Increase(cost_function(robot), NumericValue(1))
+                ),
             )
         )
 
@@ -222,6 +227,7 @@ def create_domain() -> Domain:
                 Decrease(partial_stack_functions[ore](robot), NumericValue(8)),
                 Increase(partial_stack_functions[cooked](robot), NumericValue(8)),
                 Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
+                Increase(cost_function(robot), NumericValue(1)),
                 should_update_item[ore](robot), should_update_item["coal"](robot), should_update_item[cooked](robot), 
                 should_update_item_stacks
             )
@@ -246,7 +252,8 @@ def create_domain() -> Domain:
                 Increase(partial_stack_functions[cooked](robot), partial_stack_functions[ore](robot)),
                 Assign(partial_stack_functions[ore](robot), NumericValue(0)),
                 Decrease(inventory_slots_used_function(robot), NumericValue(1)),
-                should_update_item[cooked](robot), should_update_item["coal"](robot), should_update_item_stacks
+                should_update_item[cooked](robot), should_update_item["coal"](robot), should_update_item_stacks,
+                Increase(cost_function(robot), NumericValue(2))
             )
         ))
 
@@ -257,19 +264,21 @@ def create_domain() -> Domain:
             actions.append(Action(
                 f"discard_{item}_partial",
                 parameters=[robot],
-                precondition=GreaterEqualThan(partial_stack_functions[item](robot), NumericValue(0)),
+                precondition=GreaterThan(partial_stack_functions[item](robot), NumericValue(0)),
                 effect=And(
                     Assign(partial_stack_functions[item](robot), NumericValue(0)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                    Increase(cost_function(robot), NumericValue(3))
                 ),
             ))
             actions.append(Action(
                 f"discard_{item}_stack",
                 parameters=[robot],
-                precondition=GreaterEqualThan(full_stack_functions[item](robot), NumericValue(0)),
+                precondition=GreaterThan(full_stack_functions[item](robot), NumericValue(0)),
                 effect=And(
                     Decrease(full_stack_functions[item](robot), NumericValue(1)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                    Increase(cost_function(robot), NumericValue(10))
                 ),
             ))
         else:
@@ -277,24 +286,25 @@ def create_domain() -> Domain:
             actions.append(Action(
                 f"discard_one_{item}",
                 parameters=[robot],
-                precondition=GreaterEqualThan(non_stackable_items_functions[item](robot), NumericValue(0)),
+                precondition=GreaterThan(non_stackable_items_functions[item](robot), NumericValue(0)),
                 effect=And(
                     Decrease(non_stackable_items_functions[item](robot), NumericValue(1)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                    Increase(cost_function(robot), NumericValue(5))
                 )
             ))
 
 
     domain = Domain(
         "OpenComputersDomain",
-        requirements=[Requirements.TYPING, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
+        requirements=[Requirements.TYPING, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
         actions=actions,
         functions={function: None for function_list in [
             full_stack_functions.values(),
             partial_stack_functions.values(),
             has_partial_stack_functions.values(),
             non_stackable_items_functions.values(),
-            [inventory_size_function, inventory_slots_used_function]
+            [inventory_size_function, inventory_slots_used_function, cost_function]
         ] for function in function_list},
         types=types,
         predicates=[should_update_item_stacks] + list(should_update_item.values())
@@ -341,19 +351,26 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
         initial_state.append(Not(should_update_item_stacks(robot_objects[robot.id])))
 
 
-    first_robot_id = max(robots.keys())
+    total_cost = None
+    for robot in robot_objects.values():
+        total_cost = Plus(cost_function(robot), Minus(total_cost, NumericValue(0))) \
+                     if total_cost is not None else \
+                     cost_function(robot)
+
+    max_robot_id = max(robots.keys())
     problem = Problem(
         "OpenComputersProblem",
         domain=create_domain(),
         objects=robot_objects.values(),
-        requirements=[Requirements.TYPING, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
+        requirements=[Requirements.TYPING, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
         init=initial_state,
         # Placeholder goal for testing output files
         goal=And(
-                GreaterEqualThan(non_stackable_items_functions["diamond_pickaxe"](robot_objects[first_robot_id]), NumericValue(1)),
+                GreaterEqualThan(non_stackable_items_functions["diamond_pickaxe"](robot_objects[max_robot_id]), NumericValue(1)),
                 # GreaterEqualThan(inventory_functions["cpu_tier_3"](robot_objects[3]), NumericValue(1)),
                 # GreaterEqualThan(inventory_functions["case_tier_3"](robot_objects[3]), NumericValue(1)),
-            )
+            ),
+        metric=Metric(total_cost, Metric.MINIMIZE)
     )
 
     return problem
@@ -384,7 +401,7 @@ async def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
     duration = end_time - start_time
 
     if "Found Plan" in output:
-        logger.info(f"Found plan in {duration.total_seconds()%.2} seconds", "Planner")
+        logger.info(f"Found plan in {duration.total_seconds():.2f} seconds", "Planner")
 
         solution = output.split("Found Plan")[1]
 
@@ -419,7 +436,7 @@ async def replan(robots: dict[int, Robot]) -> list[tuple[int, list[str]]]:
 
         return actions
     else:
-        logger.error(f"No solution found (Processed for {duration.total_seconds()%.2} seconds).", "Planner")
+        logger.error(f"No solution found (Processed for {duration.total_seconds():.2f} seconds).", "Planner")
         return []
 
 
