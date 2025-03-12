@@ -1,7 +1,7 @@
 local os = require("os")
 local botId = require("id")
 
-local clientVersion = "0.0.2"
+local clientVersion = "0.0.3"
 
 local sides = require("sides")
 local robot = require("robot")
@@ -182,6 +182,53 @@ local function loop()
           connection:write("{\"success\": false, \"error\": \"No action taken\"};")
         end
         
+      elseif command[1] == "place" then
+        local side = command[2]
+
+        local success
+        local obstructed
+        local errorMessage = "Failed to place"
+        if robot.count() == 0 then
+          success = false
+          errorMessage = "Selected inventory slot is empty"
+        elseif side == "front" or side == nil then
+          success = robot.place()
+          obstructed = robot.detect()
+        elseif side == "up" then
+          success = robot.placeUp()
+          obstructed = robot.detectUp()
+        elseif side == "down" then
+          success = robot.placeDown()
+          obstructed = robot.detectDown()
+        else
+          success = false
+          errorMessage = "Invalid side"
+        end
+
+        if obstructed and not success then
+          errorMessage = "Placement obstructed"
+        end
+
+        acknowledge_or_error(success, errorMessage)
+
+      elseif command[1] == "swing" then
+        local side = command[2]
+
+        local success
+        local errorMessage = "Failed to place"
+        if side == "front" or side == nil then
+          success = robot.swing()
+        elseif side == "up" then
+          success = robot.swingUp()
+        elseif side == "down" then
+          success = robot.swingDown()
+        else
+          success = false
+          errorMessage = "Invalid side"
+        end
+
+        acknowledge_or_error(success, errorMessage)
+
       elseif command[1] == "insert" then
         local robot_slot = command[2]
         local dest_slot = command[3]
@@ -221,6 +268,31 @@ local function loop()
           robot.transferTo(dest_slot, count)
           connection:write("{\"success\": true};")
         end
+
+      elseif command[1] == "equip" then
+        local slot = command[2]
+        local error = false
+
+        -- Use either the currently selected slot or the one specified in the argument
+        if slot then
+          slot = tonumber(slot)
+          if (not slot) or slot > robot.inventorySize() then
+            connection:write("{\"success\": false, \"error\": \"Invalid slot argument\"};")
+            error = true
+          else 
+            robot.select(slot)
+          end
+        end
+        
+        if not error then
+          local success = inv_controller.equip()
+          acknowledge_or_error(success, "Unable to equip item")
+        end
+
+      elseif command[1] == "drop" then
+        local quantity = tonumber(command[2])
+        local success = robot.dropUp(quantity)
+        acknowledge_or_error(success, "Items not removed from inventory")
 
       elseif command[1] == "inventory" then
         local inventory = {}
