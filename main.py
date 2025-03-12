@@ -8,7 +8,7 @@ from textual.app import App, ComposeResult
 from textual.containers import HorizontalGroup
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, Header, Input, Log
+from textual.widgets import Button, Header, Input, RichLog
 
 import logger
 import planner
@@ -121,7 +121,7 @@ class MainScreen(Screen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._log_widget = Log(highlight=True)
+        self._log_widget = RichLog(highlight=True)
         self._log_widget.highlighter = LogHighlighter()
         logger.set_log_widget(self._log_widget)
 
