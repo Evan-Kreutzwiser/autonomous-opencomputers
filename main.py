@@ -67,7 +67,9 @@ class CommandInput(Input):
         logger.info(f"Sending \"{command}\" to robot {robot}", "User")
         response = await webserver.send_command(robot, command)
         data = json.loads(response)
-        if not data['success']:
+        if data['success']:
+            logger.info(data, robot)
+        else:
             logger.error(data['error'], robot)
 
 
@@ -161,6 +163,13 @@ async def plan_actions(agents: dict[int, Robot]) -> bool:
     # Ensure inventory contents are up to date
     await asyncio.wait([asyncio.create_task(agent.update_inventory()) for agent in agents.values()])
     
+    # Ensure that items are stored efficiently to maximize inventory space
+    results = await asyncio.gather(*[agent.consolidate_stacks() for agent in agents.values()])
+    if not all(results):
+        # This shouldn't happen unless one of the robots disconnects partway through or runs into an error.
+        # Additionally, any failures updating the inventory should also cause an error here
+        return False
+
     actions = await planner.replan(agents)
     if len(actions) == 0:
         return False

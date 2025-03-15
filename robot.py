@@ -205,6 +205,42 @@ class Robot:
                 return i+1
         return -1
 
+    async def consolidate_stacks(self) -> bool:
+        """
+        Combine stacks of the same item in the robot's inventory.
+        The planner works under the assumption that inventory space is used efficiently
+        by having no more than one stack of an item type that isn't full.
+        Returns whether the operation was successful.
+        """
+        partial_stacks = {number: contents for number, contents in enumerate(self.inventory) if contents and contents[1] < recipes.stack_size.get(contents[0], 64)}
+
+        while len(partial_stacks) > 0:
+            slot, stack = partial_stacks.popitem()
+
+            destination_slot = None
+            for other_slot, other_stack in partial_stacks.items():
+                if other_slot != slot and stack[0] == other_stack[0]:
+                    destination_slot = other_slot
+                    break
+            
+            if destination_slot is None:
+                continue
+
+            success = await self.transfer_items(slot, destination_slot)
+            partial_stacks[destination_slot] = self.inventory[destination_slot]
+            if not success:
+                # Robot networking or client code failed, give up and the caller should return to the planner
+                logger.error(f"Failed to consolidate stacks in slots {slot} and {destination_slot}", self.id)
+                return False
+            
+            # If anything was left in the source stack, it means the destination was filled by the transfer.
+            # Ignore the destination slot from now on, and find try to find somewhere else for the remainder.
+            if self.inventory[slot] is not None:
+                partial_stacks.pop(destination_slot)
+                partial_stacks[slot] = self.inventory[slot]            
+
+        return True
+    
     async def transfer_items(self, source_slot: int, dest_slot: int, quantity: int = None) -> bool:
         """
         Transfer items from one inventory slot to another.
@@ -244,11 +280,11 @@ class Robot:
                 remaining_space = recipes.stack_size.get(dest_stack[0], 64) - dest_stack[1]
                 amount_to_move = min(quantity or source_stack[1], source_stack[1])
                 if remaining_space >= amount_to_move:
-                    self.inventory[dest_slot][1] += amount_to_move
+                    self.inventory[dest_slot] = (dest_stack[0], dest_stack[1] + amount_to_move)
                     self.inventory[source_slot] = None
                 else:
-                    self.inventory[dest_slot][1] += amount_to_move
-                    self.inventory[source_slot][1] -= amount_to_move
+                    self.inventory[dest_slot] = (dest_stack[0], dest_stack[1] + remaining_space)
+                    self.inventory[source_slot] = (source_stack[0], source_stack[1] - remaining_space)
         # elif source_stack is None: no-op
         return True
 
