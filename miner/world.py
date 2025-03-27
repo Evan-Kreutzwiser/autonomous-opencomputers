@@ -23,7 +23,7 @@ block_density = {
 
     "gravel": 0.6,  
 
-    "bedrock": float('inf')
+    "bedrock": 16
 }
 
 class World:
@@ -103,7 +103,7 @@ class World:
         """Get the (not noisy) block hardness from a given position"""
         if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
             return self.density[x][y][z]
-        return float('inf')
+        return 16
 
     def dig(self, x, y, z):
         if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
