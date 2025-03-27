@@ -288,6 +288,25 @@ class Robot:
         # elif source_stack is None: no-op
         return True
 
+    async def drop_unrecognized_items(self) -> bool:
+        """
+        Discard any items in the robot's inventory that are not recognized by the planner.
+        Unknown items can't be counted towards the total used inventory space in PDDL, 
+        so they should be discarded before running the planner.
+        """
+        for i, slot in enumerate(self.inventory):
+            if slot and slot[0] not in recipes.items_list:
+                logger.info(f"Discarding unknown item {slot[0]} in slot {i}", self.id)
+                await webserver.send_command(self.id, f"select {i}")
+                response = await webserver.send_command(self.id, "drop 64")
+                logger.info(f"{response}", self.id)
+                data = json.loads(response)
+                if not data["success"]:
+                    logger.error(f"Drop: Failed to drop unknown item {self.item}", self.id)
+                    return False
+                self.inventory[i] = None
+        return True
+    
     def __str__(self) -> str:
         return f"Robot {self.id} at {self.position} facing {self.direction}"
 
@@ -416,6 +435,39 @@ class SmeltAction(Action):
         return True
 
 
+class DropAction(Action):
+
+    def __init__(self, robot: Robot, item: str, full_stack: bool):
+        super().__init__(robot)
+        self.item = item
+        self.full_stack = full_stack
+
+    async def run(self) -> bool:
+        stack_size = recipes.stack_size.get(self.item, 64)
+        slot_number = None
+        for index, slot in enumerate(self.robot.inventory):
+            if slot and slot[0] == self.item:
+                if self.full_stack and slot[1] == stack_size:
+                    slot_number = index
+                    break
+                elif not self.full_stack and slot[1] < stack_size:
+                    slot_number = index
+                    break
+
+        if not slot_number:
+            logger.error(f"Drop: {self.item} not found in inventory", self.robot.id)
+            return False
+        
+        await webserver.send_command(self.robot.id, f"select {slot_number}")
+        response = await webserver.send_command(self.robot.id, f"drop 64")
+        data = json.loads(response)
+        if not data["success"]:
+            logger.error(f"Drop: Failed to drop {'full' if self.full_stack else 'partial'} stack of {self.item}", self.robot.id)
+            return False
+        
+        self.robot.inventory[slot_number] = None
+        return True
+
 def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
         item = action_name.split("_", 2)[-1]
@@ -423,9 +475,21 @@ def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action
     elif action_name.startswith("smelt_partial_"):
         item = action_name.split("_", 2)[-1]
         return SmeltAction(robot, item, False)
+    
     elif action_name.startswith("craft_"):
         item = action_name.split("_", 1)[-1]
         return CraftAction(robot, item)
+    
+    elif action_name.startswith("discard_stack_"):
+        item = action_name.split("_", 2)[-1]
+        return DropAction(robot, item, True)
+    elif action_name.startswith("discard_partial_"):
+        item = action_name.split("_", 2)[-1]
+        return DropAction(robot, item, False)
+    elif action_name.startswith("discard_one_"):
+        item = action_name.split("_", 2)[-1]
+        return DropAction(robot, item, True)
+
     elif action_name == "wait":
         return WaitAction(robot)
     else:
