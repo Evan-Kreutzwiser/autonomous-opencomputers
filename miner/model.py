@@ -23,7 +23,6 @@ if is_ipython:
 
 plt.ion()
 
-# if GPU is to be used
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
     "mps" if torch.backends.mps.is_available() else
@@ -70,10 +69,10 @@ class ReplayMemory():
         return len(self.memory)
 
 def step_environment(world: world.World, robot_position: tuple, action: int):
-
     reward = 0.0
-    new_position = robot_position
     mined_ore = False
+
+    distance_to_ore = world.distance_to_nearest_ore(*robot_position)
 
     target_position = robot_position
     if action == 0 or action == 6:
@@ -96,25 +95,37 @@ def step_environment(world: world.World, robot_position: tuple, action: int):
         target_position = (robot_position[0], robot_position[1], robot_position[2] - 1)
 
 
+    new_position = robot_position
+
     if action >= 6:
         # Mine target
-        current_block = world.sample_density(*target_position)
-        if current_block == 3.0:
+        target_block = world.sample_density(*target_position)
+        world.dig(*target_position)
+        if target_block == 3.0:
             reward = 1.0
             mined_ore = True
-        elif current_block > 9999:
+        elif target_block > 9999:
             reward = -0.5
         else:
-            reward = -0.01
+            # Discourage swining pickaxe at air
+            reward = -0.05
     else:
         # Move to target
-        if world.sample_density(*target_position) > 0:
+        if world.sample_density(*target_position) > 0.0:
+            # Discourage running into walls.
             reward = -0.5
         else:
             new_position = target_position
-            reward = -0.01
 
     observation = world.noisy_data_around(12, *new_position)
+
+    new_distance_to_ore = world.distance_to_nearest_ore(*new_position)
+
+    if new_distance_to_ore < distance_to_ore:
+        reward += 0.5
+    else:
+        reward -= 0.1
+
     return new_position, observation, reward, mined_ore
 
 # BATCH_SIZE is the number of transitions sampled from the replay buffer
@@ -174,7 +185,7 @@ def plot_durations(show_result=False):
         plt.clf()
         plt.title('Training...')
     plt.xlabel('Episode')
-    plt.ylabel('Duration')
+    plt.ylabel('Ores Mined')
     plt.plot(durations_t.numpy())
     # Take 100 episode averages and plot them too
     if len(durations_t) >= 100:

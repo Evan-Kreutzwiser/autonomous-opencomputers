@@ -30,6 +30,7 @@ class World:
 
     def __init__(self, x,y,z):
         self.blocks = [[[ "stone" for _ in range(z)] for _ in range(y)] for _ in range(x)]
+        self.density = np.zeros((x,y,z))
         self.x_size = x
         self.y_size = y
         self.z_size = z
@@ -62,6 +63,11 @@ class World:
                 
                 create_sphere(self.blocks, 2, "air", *carver_position)
 
+        for i in range(self.x_size):
+            for j in range(self.y_size):
+                for k in range(self.z_size):
+                    self.density[i][j][k] = block_density[self.blocks[i][j][k]]
+
     def noisy_data_around(self, radius, x, y, z) -> list[list[list[float]]]:
         """Emulate in-game Geolyzer readings for a section of the world. Noise increases with distance from the robot's position"""
         world_slice = []
@@ -74,22 +80,36 @@ class World:
                     distance = ((x - radius) ** 2 + (y - radius) ** 2 + (z - radius) ** 2) ** 0.5
                     if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
                         noise = (distance / 33) * 2
-                        density = block_density[self.blocks[x][y][z]]
-                        world_slice[-1][-1].append(density + noise)
+                        world_slice[-1][-1].append(self.density[x][y][z] + noise)
                     else:
                         world_slice[-1][-1].append(block_density["bedrock"])
         return world_slice
     
-    def sample_block(self, x, y, z):
+
+    def distance_to_nearest_ore(self, x, y, z):
+        """Measures the Manhatten distance to the nearest block with a density of 3."""
+        indices = np.argwhere(self.density == 3.0)
+        distances = indices.sum(axis=1)
+        nearest_index = np.argmin(distances)
+        return distances[nearest_index]
+
+    def sample_block(self, x, y, z) -> str:
         """String name of a block at a given position"""
         if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
             return self.blocks[x][y][z]
         return "bedrock"
     
-    def sample_density(self, x, y, z):
+    def sample_density(self, x, y, z) -> float:
         """Get the (not noisy) block hardness from a given position"""
-        return block_density.get(self.sample_block(x, y, z), float('inf'))
-    
+        if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
+            return self.density[x][y][z]
+        return float('inf')
+
+    def dig(self, x, y, z):
+        if 0 <= x < self.x_size and 0 <= y < self.y_size and 0 <= z < self.z_size:
+            self.blocks[x][y][z] = "air"
+            self.density[x][y][z] = 0.0
+
 
 def create_sphere(world, radius, block, center_x, center_y, center_z):
     x, y, z = len(world), len(world[0]), len(world[0][0])
