@@ -30,7 +30,7 @@ class UpdateServer (http.server.BaseHTTPRequestHandler):
 
 def _disconnect(id):
     connections.pop(id)
-    if id in removed_connections:
+    if id not in removed_connections:
         removed_connections.append(id)
         connections_updated_event.set()
 

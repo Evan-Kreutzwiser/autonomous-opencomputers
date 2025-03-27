@@ -160,10 +160,10 @@ async def plan_actions(agents: dict[int, Robot]) -> bool:
 
     :return: Whether the planner found a valid plan
     """
-    # Ensure inventory contents are up to date
+    # Ensure inventory contents are up to date and that items are optimally stacked.
+    # Additionally, discard any items not recognized by the planner.
     await asyncio.wait([asyncio.create_task(agent.update_inventory()) for agent in agents.values()])
-    
-    # Ensure that items are stored efficiently to maximize inventory space
+    await asyncio.wait([asyncio.create_task(agent.drop_unrecognized_items()) for agent in agents.values()])
     results = await asyncio.gather(*[agent.consolidate_stacks() for agent in agents.values()])
     if not all(results):
         # This shouldn't happen unless one of the robots disconnects partway through or runs into an error.
@@ -258,6 +258,8 @@ async def main():
 
                     for agent in robots.values():
                         agent.stop_actions()
+
+                    await asyncio.gather(*[agent.ready_event.wait() for agent in robots.values()])
 
                 else:
                     await asyncio.sleep(1)
