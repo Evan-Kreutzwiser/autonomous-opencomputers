@@ -41,12 +41,6 @@ partial_stack_functions = {
     for item in items_list
     if stack_size[item] > 1
 }
-# Whether partial_stack_functions are nonzero, for inventory usage calculations
-has_partial_stack_functions = {
-    item: NumericFunction(f"robot_has_partial_stack_{item}", robot_variable)
-    for item in items_list
-    if stack_size[item] > 1
-}
 non_stackable_items_functions = {
     item: NumericFunction(f"robot_single_stacks_{item}", robot_variable)
     for item in items_list
@@ -66,86 +60,56 @@ def create_domain() -> Domain:
     robot = robot_variable
     actions = []
 
-    # Derived predicates and functions
-    #
-    # Derived values are calculated manually after every action rather
-    # than making use of the derived-predicates feature, because no planner
-    # seems to support the full scope of features I need.
+    # Inventory slot usage
     ####################
 
-    for item in full_stack_functions.keys():
-        actions.append(Action(
-            f"compress_{item}_stack_no_remainder",
-            parameters=[robot],
-            precondition=And(should_update_item[item](robot), EqualTo(partial_stack_functions[item](robot), NumericValue(stack_size[item]))),
-            effect=And(
-                Increase(full_stack_functions[item](robot), NumericValue(1)),
-                Decrease(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
-                Not(should_update_item[item](robot)),
-            )
-        ))
+    slots_used_non_stackable = None
+    for item in non_stackable_items_functions.keys():
+        slots_used_non_stackable = Plus(Minus(slots_used_non_stackable, NumericValue(0)), non_stackable_items_functions[item](robot)) \
+            if slots_used_non_stackable is not None else non_stackable_items_functions[item](robot)
         
-        actions.append(Action(
-            f"compress_{item}_stack_with_remainder",
-            parameters=[robot],
-            precondition=And(should_update_item[item](robot), GreaterThan(partial_stack_functions[item](robot), NumericValue(stack_size[item]))),
-            effect=And(
-                Increase(full_stack_functions[item](robot), NumericValue(1)),
-                Decrease(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
-                Increase(inventory_slots_used_function(robot), NumericValue(1)), 
-                Not(should_update_item[item](robot)),
-            )
-        ))
-
-        actions.append(Action(
-            f"unpack_{item}_stack",
-            parameters=[robot],
-            precondition=And(should_update_item[item](robot), LesserThan(partial_stack_functions[item](robot), NumericValue(0))),
-            effect=And(
-                Decrease(full_stack_functions[item](robot), NumericValue(1)),
-                Increase(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
-                Decrease(inventory_slots_used_function(robot), NumericValue(1)),
-                Not(should_update_item[item](robot)),
-            )
-        ))
-
-        # Assuming that should_update_item will only be invoked if items were added or removed,
-        # If there isn't any of the item it is safe to assume there was a partial stack which is not gone.
-        actions.append(Action(
-            f"ran_out_of_{item}",
-            parameters=[robot],
-            precondition=And(
-                should_update_item[item](robot),
-                And(
-                    EqualTo(partial_stack_functions[item](robot), NumericValue(0)),
-                    EqualTo(full_stack_functions[item](robot), NumericValue(0))
-                )),
-            effect=And(
-                Decrease(inventory_slots_used_function(robot), NumericValue(1)),
-                Not(should_update_item[item](robot)),
-            )
-        ))
-
-        # No change in the number of stacks
-        actions.append(Action(
-            f"acknowledge_{item}_update",
-            parameters=[robot],
-            precondition=And(
-                should_update_item[item](robot),
-                And(
-                    GreaterThan(partial_stack_functions[item](robot), NumericValue(0)),
-                    LesserThan(partial_stack_functions[item](robot), NumericValue(stack_size[item]))
-                )
-            ),
-            effect=Not(should_update_item[item](robot))
-        ))
+    slots_used_full = None
+    for item in full_stack_functions.keys():
+        slots_used_full = Plus(Minus(slots_used_full, NumericValue(0)), full_stack_functions[item](robot)) \
+            if slots_used_full is not None else full_stack_functions[item](robot)
 
     actions.append(Action(
-        "finish_updating_items",
+        "update_stack_usage",
         parameters=[robot],
-        precondition=And(should_update_item_stacks(robot), *[Not(pred(robot)) for pred in should_update_item.values()]),
+        precondition=And(should_update_item_stacks(robot)),
         effect=And(
             Not(should_update_item_stacks(robot)),
+
+            Increase(inventory_slots_used_function(robot), Plus(Minus(slots_used_non_stackable, NumericValue(0)), Minus(slots_used_full, NumericValue(0)))),
+
+            And(
+                # Unpack full stacks
+                *[effects.When(And(
+                    LesserThan(partial_stack_functions[item](robot), NumericValue(0)),
+                    GreaterThan(full_stack_functions[item](robot), NumericValue(0)),
+                ), And(
+                    Decrease(full_stack_functions[item](robot), NumericValue(1)),
+                    Increase(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
+                    # Stack usage not changed in this case
+                )) for item in full_stack_functions.keys()],
+
+                # Condense full stacks
+                *[effects.When(And(
+                    GreaterThan(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
+                ), And(
+                    Increase(full_stack_functions[item](robot), NumericValue(1)),
+                    Increase(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
+                    # Handle the event where the partial stack contained exactly the stack size in the next group
+                )) for item in full_stack_functions.keys()],
+
+                # Detect and count partial stacks
+                *[effects.When(And(
+                    GreaterThan(partial_stack_functions[item](robot), NumericValue(0)),
+                    LesserThan(partial_stack_functions[item](robot), NumericValue(stack_size[item])),
+                ), And(
+                    Increase(inventory_slots_used_function(robot), NumericValue(1)),
+                )) for item in full_stack_functions.keys()],
+            )
         )))
 
     # Crafting
@@ -175,7 +139,6 @@ def create_domain() -> Domain:
         # Add the output item to this robot's inventory
         if stack_size[item] > 1:
             crafting_effects.append(Increase(partial_stack_functions[item](robot), NumericValue(recipes[item]["output"])))
-            crafting_effects.append(should_update_item[item](robot))
         else:
             crafting_effects.append(Increase(non_stackable_items_functions[item](robot), NumericValue(1)))
             crafting_effects.append(Increase(inventory_slots_used_function(robot), NumericValue(1)))
@@ -184,7 +147,6 @@ def create_domain() -> Domain:
         for ingredient, amount in current_recipe.items():
             ingredient_can_stack = stack_size[ingredient] > 1
             if ingredient_can_stack:
-                crafting_effects.append(should_update_item[ingredient](robot))
                 crafting_effects.append(Decrease(partial_stack_functions[ingredient](robot), NumericValue(amount)))
             else:
                 crafting_effects.append(Decrease(non_stackable_items_functions[ingredient](robot), NumericValue(amount))) 
@@ -201,6 +163,7 @@ def create_domain() -> Domain:
                 ),
                 effect=And(
                     should_update_item_stacks,
+                    Assign(inventory_slots_used_function(robot), NumericValue(0)),
                     *crafting_effects,
                     Increase(cost_function(robot), NumericValue(1))
                 ),
@@ -228,7 +191,7 @@ def create_domain() -> Domain:
                 Increase(partial_stack_functions[cooked](robot), NumericValue(8)),
                 Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
                 Increase(cost_function(robot), NumericValue(1)),
-                should_update_item[ore](robot), should_update_item["coal"](robot), should_update_item[cooked](robot), 
+                Assign(inventory_slots_used_function(robot), NumericValue(0)),
                 should_update_item_stacks
             )
         ))
@@ -252,7 +215,6 @@ def create_domain() -> Domain:
                 Increase(partial_stack_functions[cooked](robot), partial_stack_functions[ore](robot)),
                 Assign(partial_stack_functions[ore](robot), NumericValue(0)),
                 Decrease(inventory_slots_used_function(robot), NumericValue(1)),
-                should_update_item[cooked](robot), should_update_item["coal"](robot), should_update_item_stacks,
                 Increase(cost_function(robot), NumericValue(2))
             )
         ))
@@ -262,9 +224,12 @@ def create_domain() -> Domain:
         if stack_size[item] > 1:
             # Stackable items (Can discard either a full stack or the partial stack)
             actions.append(Action(
-                f"discard_{item}_partial",
+                f"discard_partial_{item}",
                 parameters=[robot],
-                precondition=GreaterThan(partial_stack_functions[item](robot), NumericValue(0)),
+                precondition=And(
+                    Not(should_update_item_stacks(robot)),
+                    GreaterThan(partial_stack_functions[item](robot), NumericValue(0)),
+                ),
                 effect=And(
                     Assign(partial_stack_functions[item](robot), NumericValue(0)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
@@ -272,9 +237,13 @@ def create_domain() -> Domain:
                 ),
             ))
             actions.append(Action(
-                f"discard_{item}_stack",
+                f"discard_stack_{item}",
                 parameters=[robot],
-                precondition=GreaterThan(full_stack_functions[item](robot), NumericValue(0)),
+                precondition=And(
+                    Not(should_update_item_stacks(robot)),
+                    EqualTo(partial_stack_functions[item](robot), NumericValue(0)),
+                    GreaterThan(full_stack_functions[item](robot), NumericValue(0)),
+                ),
                 effect=And(
                     Decrease(full_stack_functions[item](robot), NumericValue(1)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
@@ -286,7 +255,10 @@ def create_domain() -> Domain:
             actions.append(Action(
                 f"discard_one_{item}",
                 parameters=[robot],
-                precondition=GreaterThan(non_stackable_items_functions[item](robot), NumericValue(0)),
+                precondition=And(
+                    Not(should_update_item_stacks(robot)),
+                    GreaterThan(non_stackable_items_functions[item](robot), NumericValue(0)),
+                ),
                 effect=And(
                     Decrease(non_stackable_items_functions[item](robot), NumericValue(1)),
                     Decrease(inventory_slots_used_function(robot), NumericValue(1)),
@@ -302,12 +274,11 @@ def create_domain() -> Domain:
         functions={function: None for function_list in [
             full_stack_functions.values(),
             partial_stack_functions.values(),
-            has_partial_stack_functions.values(),
             non_stackable_items_functions.values(),
             [inventory_size_function, inventory_slots_used_function, cost_function]
         ] for function in function_list},
         types=types,
-        predicates=[should_update_item_stacks] + list(should_update_item.values())
+        predicates=[should_update_item_stacks] #+ list(should_update_item.values())
     )
 
     return domain
@@ -367,7 +338,8 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
         # Placeholder goal for testing output files
         goal=And(
                 GreaterEqualThan(non_stackable_items_functions["diamond_pickaxe"](robot_objects[max_robot_id]), NumericValue(1)),
-                # GreaterEqualThan(inventory_functions["cpu_tier_3"](robot_objects[3]), NumericValue(1)),
+                GreaterEqualThan(partial_stack_functions["cpu_tier_3"](robot_objects[max_robot_id]), NumericValue(1)),
+                # GreaterEqualThan(partial_stack_functions["crafting_table"](robot_objects[max_robot_id]), NumericValue(1)),
                 # GreaterEqualThan(inventory_functions["case_tier_3"](robot_objects[3]), NumericValue(1)),
             ),
         metric=Metric(total_cost, Metric.MINIMIZE)
@@ -444,9 +416,40 @@ if __name__ == "__main__":
     domain = create_domain()
 
     robot = Robot(1)
+    # robot.inventory = [
+    #     None,
+    #     ("plank", 8),
+    #     ("diamond", 3),
+    #     None,
+    #     None, 
+    #     ("cpu_tier_3", 63),
+    #     None,
+    #     None,
+    #     None,
+    #     None,
+    #     None,
+    #     None,
+    #     None,
+    # ]
+
     robot.inventory = [
-        ("plank", 2),
-        ("diamond", 3),
+        None,
+        ("plank", 43),
+        ("diamond", 23),
+        None,
+        None, 
+        ("iron", 50),
+        ("redstone", 50),
+        ("gold", 50),
+        ("cobblestone", 50),
+        ("alu", 4),
+        ("control_unit", 4),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
