@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from itertools import count
+import os
 import world
 
 is_ipython = 'inline' in matplotlib.get_backend()
@@ -67,6 +67,29 @@ class ReplayMemory():
 
     def __len__(self):
         return len(self.memory)
+
+
+# Robot faces a direction and either mines or moves
+n_actions = 6 + 6
+
+# Instance utilized by the robot's mining action
+robot_nn = DQN(n_actions).to(device)
+has_loaded_weights = False
+
+def load_model():
+    """
+    Load model.pt for use in the robot's mining action. 
+    May be called multiple times to reload the model from disk.
+    """
+    # TODO: Error handling 
+    model_state = torch.load("model.pt")
+    robot_nn.load_state_dict(model_state)
+    has_loaded_weights = True
+
+
+# Model Training
+################
+
 
 def step_environment(world: world.World, robot_position: tuple, action: int):
     reward = 0.0
@@ -142,9 +165,6 @@ EPS_END = 0.05
 EPS_DECAY = 1000
 TAU = 0.005
 LR = 1e-4
-
-# Robot faces a direction and either mines or moves
-n_actions = 6 + 6
 
 policy_net = DQN(n_actions).to(device)
 target_net = DQN(n_actions).to(device)
@@ -251,57 +271,65 @@ def optimize_model():
     optimizer.step()
 
 
+def train():
+    if not os.path.exists("miner/checkpoints"):
+        os.mkdir("miner/checkpoints")
+
+    if torch.cuda.is_available() or torch.backends.mps.is_available():
+        num_episodes = 600
+    else:
+        print("Warning: Cuda device not available")
+        num_episodes = 50
+
+    for i_episode in range(num_episodes):
+        # Initialize the environment and get its state
+        env = world.World(128, 64, 128)
+        robot_position = (64, 32, 64)
+        print("Starting episode", i_episode)
 
 
+        ore_mined = 0
 
-if torch.cuda.is_available() or torch.backends.mps.is_available():
-    num_episodes = 600
-else:
-    num_episodes = 50
+        current_state = torch.tensor(env.noisy_data_around(12, *robot_position), dtype=torch.float32, device=device).unsqueeze(0)
+        for t in range(384):
+            action = select_action(current_state)
+            new_position, observation, reward, did_mine_ore = step_environment(env, robot_position, action.item())
+            reward = torch.tensor([reward], device=device)
 
-for i_episode in range(num_episodes):
-    # Initialize the environment and get its state
-    env = world.World(128, 64, 128)
-    robot_position = (64, 32, 64)
-    print("Starting episode")
+            if did_mine_ore:
+                ore_mined += 1
+
+            next_state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+
+            # Store the transition in memory
+            memory.push(current_state, action, next_state, reward)
+
+            current_state = next_state
+
+            # Perform one step of the optimization
+            optimize_model()
+
+            # Soft update of the target network's weights
+            # θ′ ← τ θ + (1 −τ )θ′
+            target_net_state_dict = target_net.state_dict()
+            policy_net_state_dict = policy_net.state_dict()
+            for key in policy_net_state_dict:
+                target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+            target_net.load_state_dict(target_net_state_dict)
+
+        episode_utility.append(ore_mined)
+        print(f"Mined {ore_mined} ores")
+        plot_durations()
+
+        if (i_episode) % 25 == 0 and i_episode > 0:
+            print("Saving checkpoint")
+            torch.save(policy_net_state_dict, f"miner/checkpoints/miner-{i_episode}.pt")
+
+    print('Complete')
+    plot_durations(show_result=True)
+    plt.ioff()
+    plt.show()
 
 
-    ore_mined = 0
-
-    current_state = torch.tensor(env.noisy_data_around(12, *robot_position), dtype=torch.float32, device=device).unsqueeze(0)
-    for t in range(256):
-        action = select_action(current_state)
-        # observation, reward, terminated, truncated, _ = env.step(action.item())
-        new_position, observation, reward, did_mine_ore = step_environment(env, robot_position, action.item())
-        reward = torch.tensor([reward], device=device)
-
-        if did_mine_ore:
-            ore_mined += 1
-
-
-        next_state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
-
-        # Store the transition in memory
-        memory.push(current_state, action, next_state, reward)
-
-        # Move to the next state
-        current_state = next_state
-
-        # Perform one step of the optimization (on the policy network)
-        optimize_model()
-
-        # Soft update of the target network's weights
-        # θ′ ← τ θ + (1 −τ )θ′
-        target_net_state_dict = target_net.state_dict()
-        policy_net_state_dict = policy_net.state_dict()
-        for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-        target_net.load_state_dict(target_net_state_dict)
-
-    episode_utility.append(ore_mined)
-    plot_durations()
-
-print('Complete')
-plot_durations(show_result=True)
-plt.ioff()
-plt.show()
+if __name__ == "__main__":
+    train()
