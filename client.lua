@@ -1,7 +1,7 @@
 local os = require("os")
 local botId = require("id")
 
-local clientVersion = "0.0.3"
+local clientVersion = "0.0.4"
 
 local sides = require("sides")
 local robot = require("robot")
@@ -215,7 +215,7 @@ local function loop()
         local side = command[2]
 
         local success
-        local errorMessage = "Failed to place"
+        local errorMessage = "Failed to mine"
         if side == "front" or side == nil then
           success = robot.swing()
         elseif side == "up" then
@@ -230,18 +230,17 @@ local function loop()
         acknowledge_or_error(success, errorMessage)
 
       elseif command[1] == "insert" then
-        local robot_slot = command[2]
-        local dest_slot = command[3]
+        local side = command[2]
+        local dest_slot = tonumber(command[3])
         local count = tonumber(command[4] or 1)
 
-        if not robot_slot or not dest_slot then
-          connection:write("{\"success\": false, \"error\": \"Missing slot argument\"};")
+        if side ~= "front" and side ~= "up" and side ~= "down" then
+          connection:write("{\"success\": false, \"error\": \"Invalid side\"};")
+        elseif not dest_slot then
+          connection:write("{\"success\": false, \"error\": \"Missing or invalid destination slot\"};")
         else
-          robot_slot = tonumber(robot_slot)
-          dest_slot = tonumber(dest_slot)
-          robot.select(robot_slot)
-          local success, reason = inv_controller.dropIntoSlot(sides.front, dest_slot, count)
-          acknowledge_or_error(success, reason)
+          local success, reason = inv_controller.dropIntoSlot(sides[side], dest_slot, count)
+          acknowledge_or_error(success, reason or "Inventory not found or failed to transfer item(s)")
         end
 
       elseif command[1] == "select" then
@@ -267,6 +266,40 @@ local function loop()
           robot.select(source_slot)
           robot.transferTo(dest_slot, count)
           connection:write("{\"success\": true};")
+        end
+
+      elseif command[1] == "take" then
+        local side = command[2]
+        local slot = tonumber(command[3])
+        if side == "front" or side == "down" or side == "up" then
+          if slot ~= nil then
+            local success = inv_controller.suckFromSlot(sides[side], slot)
+            acknowledge_or_error(success, "Failed to transfer item(s)")
+          else
+            connection:write("{\"success\": false, \"error\": \"Invalid or missing slot number argument\"};")
+          end
+        else
+          connection:write("{\"success\": false, \"error\": \"Invalid side\"};")
+        end
+
+      elseif command[1] == "read" then
+        -- Read the contents of a slot from an adjacent inventory
+        local side = command[2]
+        local slot = tonumber(command[3])
+        if side == "front" or side == "down" or side == "up" then
+          if slot ~= nil then
+            local stack = inv_controller.getStackInSlot(sides[side], slot)
+            if stack then
+              -- Many modded items share an ID, and are distinguished by their data value
+              connection:write(toJson({success = true, stack = {name = stack.name, count = stack.size, dataValue = stack.damage}}))
+            else
+              connection:write("{\"success\": true, \"stack\": null};")
+            end
+          else
+            connection:write("{\"success\": false, \"error\": \"Invalid or missing slot number argument\"};")
+          end
+        else
+          connection:write("{\"success\": false, \"error\": \"Invalid side\"};")
         end
 
       elseif command[1] == "equip" then
@@ -304,6 +337,16 @@ local function loop()
           end
         end
         connection:write(toJson({success = true, inventory = inventory, size = robot.inventorySize()}))
+
+      elseif command[1] == "durability" then
+        -- Get the durability of the currently equipped item as a value from 0 - 1, where 1 is full durability.
+        local durability, reason = robot.durability()
+        
+        if durability == nil then
+          connection:write(toJson({success = false, error = reason}))
+        else
+          connection:write(toJson({success = true, durability = durability}))
+        end
 
       elseif command[1] == "craft" then
         -- Crafting recipe must be placed in a 3x3 area 
