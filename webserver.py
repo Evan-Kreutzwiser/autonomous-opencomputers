@@ -102,15 +102,21 @@ async def _handle_new_client(reader: asyncio.StreamReader, writer: asyncio.Strea
         writer.close()
 
 async def _receive_message(reader: asyncio.StreamReader) -> str:
+    # Breaking the read into smaller chunks fixes an issue with extra large payloads that appears to
+    # lock up the interpreter (Might just be an exception that messes with asyncio & the TUI?)
     message = b""
+    max_read_size = 32768
     while True:
         try:
-            message += await reader.readuntil(b";")
-            break
+            new_chunk = await reader.read(max_read_size)
+            if not new_chunk:
+                return ""  # Connection closed
+            
+            message += new_chunk
+            if new_chunk.endswith(b";"):
+                break
         except asyncio.IncompleteReadError:
             return ""
-        except asyncio.LimitOverrunError:
-            continue
 
     # Strip the trailing semicolon
     return message.decode()[:-1]
