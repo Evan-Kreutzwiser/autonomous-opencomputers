@@ -15,6 +15,9 @@ import planner
 import webserver
 from miner import model
 from robot import Robot
+import time
+
+robots: dict[int, Robot] = {}
 
 # Allow the planner loop to be paused so that commands can manually be run
 pause_event = asyncio.Event()
@@ -44,8 +47,9 @@ class CommandInput(Input):
     async def action_submit(self):
         super().action_submit()
 
-        # Dev command to replace client.lua on all connected robots
+        # Global commands
         if self.value == "update":
+            # Replace client.lua on all connected robots with server's copy
             logger.info("Updating all robots", "User")
             failed = False
             for id in webserver.get_robots():
@@ -57,6 +61,10 @@ class CommandInput(Input):
             if failed:
                 logger.error("Not all robots updated successfully", "User")
             return
+        elif self.value == "reloadnn":
+            logger.info("Reloading miner neural network", "User")
+            model.load_model()
+            return
         
         split = self.value.split(" ", 1)
         if len(split) != 2 or not split[0].isdecimal():
@@ -65,13 +73,46 @@ class CommandInput(Input):
 
         robot, command = int(split[0]), split[1]
 
+        # Built-in commands
+
+        if command == "mine" and robot in robots:
+            logger.info(f"Initiating mining action for robot {robot}", "User")
+            robots[robot].add_action(["mine"])
+            task = asyncio.create_task(robots[robot].run())
+            return
+        if command.startswith("set") and robot in robots:
+            pieces = command.split(' ')
+            if len(pieces) == 1:
+                logger.error("\"set\" missing target variable: position or rotation", "User")
+            elif pieces[1] == "rotation":
+                if len(pieces) < 3 or pieces[2] not in ["north", "east", "south", "west"]:
+                    logger.error("\"set rotation <direction>\": must select one of north, east, south, or west ", "User")
+                    return
+                robots[robot].direction = pieces[2]
+                logger.info(f"Set robot {robot}'s direction to {pieces[2]}", "User")
+            elif pieces[1] == "position":
+                if len(pieces) < 5 or not int(pieces[2]) or not int(pieces[3]) or not int(pieces[4]):
+                    logger.error("\"set position <x> <y> <z>\": coordinates must be integers", "User")
+                    return
+                x, y, z = int(pieces[2]), int(pieces[3]), int(pieces[4])
+                robots[robot].position = (x,y,z)
+                logger.info(f"Set robot {robot}'s position to {x}, {y}, {z}", "User")
+            
+            return
+
+        # Direct command passthrough to robot
         logger.info(f"Sending \"{command}\" to robot {robot}", "User")
+        start_time = time.time()
+
         response = await webserver.send_command(robot, command)
         data = json.loads(response)
         if data['success']:
             logger.info(data, robot)
         else:
             logger.error(data['error'], robot)
+
+        end_time = time.time()
+        logger.info(f"Command execution took {end_time - start_time:.2f} seconds", "Performance")
 
 
 class InputContainer(HorizontalGroup):
@@ -197,8 +238,6 @@ async def main():
     ui_task = asyncio.create_task(app.run_async())
     
     await webserver.start_server()
-
-    robots = {}
 
     exit_event = asyncio.Event()
     async def event_loop():
