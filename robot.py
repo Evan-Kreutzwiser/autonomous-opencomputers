@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Literal
 import logger
+from miner import model
 from recipes import convert_item_name
 import recipes
 import webserver
@@ -84,10 +85,11 @@ class Robot:
             return False
         
         # Update recorded position
+        x,y,z = self.position
         if side == "up":
-            self.position[1] += 1
+            self.position = (x, y + 1, z)
         elif side == "down":
-            self.position[1] -= 1
+            self.position = (x, y - 1, z)
         else:
             moved_direction = ""
             if side == "front":
@@ -100,13 +102,13 @@ class Robot:
                 moved_direction = right_of(self.direction)
             
             if moved_direction == "north":
-                self.position[2] -= 1
+                self.position = (x, y, z - 1)
             elif moved_direction == "south":
-                self.position[2] += 1
+                self.position = (x, y, z + 1)
             elif moved_direction == "west":
-                self.position[0] -= 1
+                self.position = (x - 1, y, z)
             elif moved_direction == "east":
-                self.position[0] += 1
+                self.position = (x + 1, y, z)
 
         return True
 
@@ -310,6 +312,31 @@ class Robot:
     def __str__(self) -> str:
         return f"Robot {self.id} at {self.position} facing {self.direction}"
 
+    async def use_geolyzer(self, radius) -> list[list[list[int]]]:
+        """Read the block hardness in the area around the robot"""
+
+        response = await webserver.send_command(self.id, f"scan {radius}")
+        data = json.loads(response)
+        if not data["success"]:
+            logger.error(f"Geolyzer: {data['error']}", self.id)
+            return []
+        
+        # Parse the json containing a 3d array of data.
+        # The client's small json helper isn't capable of generating array syntax,
+        # so it uses standard objects with numeric keys
+        table = [None] * (radius*2 + 1)
+        for x, y_slice_dict in data["data"].items():
+            x_entry = [None] * (radius*2 + 1)
+            for y, z_slice_dict in y_slice_dict.items():
+                z_entry = [None] * (radius*2 + 1)
+                for z, hardness in z_slice_dict.items():
+                    z_entry[int(z)] = hardness
+                x_entry[int(y)] = z_entry
+            
+            table[int(x)] = x_entry
+
+        return table
+
 
 class Action:
     """
@@ -468,6 +495,131 @@ class DropAction(Action):
         self.robot.inventory[slot_number] = None
         return True
 
+class MineAction(Action):
+
+    async def run(self) -> bool:
+        ideal_y = 30 # TODO: Replace with runtime-calculated optimal height for desired resources
+
+        # Unlike a player, The robot can't mine stone without a pickaxe.
+        # It is important that we keep a spare for escaping to surface once mining is done.
+        inventory_contents = self.robot.count_items()
+
+        total_pickaxes = inventory_contents.get("stone_pickaxe", 0) + inventory_contents.get("iron_pickaxe", 0) + inventory_contents.get("diamond_pickaxe", 0)
+        if total_pickaxes < 2:
+            logger.error("Cannot safely mine with less than two pickaxes", self.robot.id)
+            return False
+        
+        # Equip pickaxe to mine with
+
+        index = self.robot.find_item("diamond_pickaxe")
+        if index == -1:
+            index = self.robot.find_item("iron_pickaxe")
+        if index == -1:
+            index = self.robot.find_item("stone_pickaxe")
+        
+        response = await webserver.send_command(self.robot.id, f"equip {index}")
+        data = json.loads(response)
+        if not data["success"]:
+            logger.error("Failed to equip pickaxe", self.robot.id)
+            return False
+
+        # Descend to ideal mining depth
+        while self.robot.position[1] >= ideal_y:
+            await webserver.send_command(self.robot.id, "swing down")
+            success = await self.robot.move("down")
+            if not success:
+                logger.error(f"Failed to reach target depth of y={ideal_y}", self.robot.id)
+                return False
+
+        # Mine directed by the neural network until the pickaxe runs out of durability
+        # Inventory is checked periodically to discard excess stone and unknown items
+        done = False
+        next_inventory_check_countdown = self.robot.inventory.count(None) - 1
+        while not done:
+            response = await webserver.send_command(self.robot.id, "durability")
+            data = json.loads(response)
+            if self.cancel_event.is_set() or (not data["success"] and data["error"] == "no tool equipped"):
+                done = True
+            elif not data["success"]:
+                logger.error("Failed to check tool durability", self.robot.id)
+
+            geolyzer_view = await self.robot.use_geolyzer(12)
+
+            if geolyzer_view == []:
+                logger.error("Failed to read geolyzer data", self.robot.id)
+                done = True
+
+            # TODO: Bayes net optimal mining height tracking
+            direction, should_mine = model.run_model_one_step(geolyzer_view, 0)
+
+            logger.info(f"Action: {direction}, {'mining' if should_mine else 'move'}", self.robot.id)
+            if direction != "up" and direction != "down":
+                await self.robot.turn_to_face(direction)
+
+            facing = direction if direction == "up" or direction == "down" else "front"
+            if should_mine:
+                await webserver.send_command(self.robot.id, f"swing {facing}")
+            else:
+                await self.robot.move(facing)
+
+            if next_inventory_check_countdown == 0:
+                success = await self.robot.update_inventory()
+                success2 = await self.robot.drop_unrecognized_items()
+                # Mining puts the drop in the first available slot after the selection, even if further in the inventory a partial stack already exists
+                await self.robot.consolidate_stacks()
+
+                data = json.loads(response)
+                if not success or not success2:
+                    logger.error("Problem refreshing or clearing unknown items from inventory", self.robot.id)
+
+                # Scanning the inventory is a time-consuming action.
+                # Assuming that every minable block drops one type of item, in the worst case a 
+                # number of mining actions equal to the number of free slots can be run without 
+                # worrying about not having space for drops. 
+                next_inventory_check_countdown = self.robot.inventory.count(None) - 1
+
+            next_inventory_check_countdown -= 1
+
+
+        # Using weaker pickaxe, return to surface
+        index = self.robot.find_item("stone_pickaxe")
+        if index == -1:
+            index = self.robot.find_item("iron_pickaxe")
+        if index == -1:
+            index = self.robot.find_item("diamond_pickaxe")
+
+        response = await webserver.send_command(self.robot.id, f"equip {index}")
+        data = json.loads(response)
+        if not data["success"]:
+            logger.error("Failed to equip second pickaxe", self.robot.id)
+            return False
+
+        while True:
+            await webserver.send_command(self.robot.id, "swing up")
+            success = await self.robot.move("up")
+            if not success:
+                # TODO: robot.move does not state reason for failure. Assume that far 
+                #       enough above sea level a failed upwards movement means the 
+                #       robot is above ground and too high above terrain
+                if self.robot.position[1] > 70:
+                    break
+
+                # The robot can't move if it is more than 8 blocks above the floor and it 
+                # isn't touching the side of another block. Digging a verticle tunnel its 
+                # usually fine, but running into a cave requires extra work to escape 
+                while not success:
+                    await webserver.send_command(self.robot.id, "swing front")
+                    success = await self.robot.move("front")
+                    if success:
+                        break
+
+                    await webserver.send_command(self.robot.id, "swing down")
+                    await self.robot.move("down")
+                    
+
+        return True
+
+
 def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
         item = action_name.split("_", 2)[-1]
@@ -490,6 +642,9 @@ def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action
         item = action_name.split("_", 2)[-1]
         return DropAction(robot, item, True)
 
+    elif action_name == "mine":
+        return MineAction(robot)
+    
     elif action_name == "wait":
         return WaitAction(robot)
     else:

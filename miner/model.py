@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import os
-import world
+from miner import world
 
 is_ipython = 'inline' in matplotlib.get_backend()
 if is_ipython:
@@ -82,10 +82,40 @@ def load_model():
     May be called multiple times to reload the model from disk.
     """
     # TODO: Error handling 
-    model_state = torch.load("model.pt")
+    global has_loaded_weights
+    model_state = torch.load("miner/model.pt")
     robot_nn.load_state_dict(model_state)
     has_loaded_weights = True
 
+def run_model_one_step(geolyzer_view: list[list[list[int]]], distance_from_target_y: int) -> tuple[str, bool]:
+    """
+    Use the DQN Model to select the next action a mining robot should take.
+
+    Returns a string containing a direction (cardinal, up, or down), and bool 
+    indicating whether the robot should mine. When the value is true the robot 
+    should mine in the chosen direction, otherwise it should attempt to move in 
+    that direction. The direction is absolute - the model does not know its local 
+    heading, and the caller is responsible for conversion and rotation the robot.
+    """
+
+    if not has_loaded_weights:
+        raise RuntimeError("No model loaded for NN")
+
+    view_tensor = torch.tensor(geolyzer_view, dtype=torch.float32, device=device).unsqueeze(0)
+    action = robot_nn(view_tensor).max(1).indices.view(1, 1)
+
+    mapping = [
+        "east", # +X
+        "west", # -X
+        "up", # +Y
+        "down", # -Y
+        "south", # +Z
+        "north", # -Z
+    ]
+
+    # Actions 0-5 are navigation, 6-11 are mining
+    return (mapping[action % 6], action >= 6)
+    
 
 # Model Training
 ################

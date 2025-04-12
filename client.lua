@@ -1,7 +1,7 @@
 local os = require("os")
 local botId = require("id")
 
-local clientVersion = "0.0.4"
+local clientVersion = "0.0.5"
 
 local sides = require("sides")
 local robot = require("robot")
@@ -19,6 +19,12 @@ if not component.isAvailable("inventory_controller") then
   return
 end
 local inv_controller = component.inventory_controller
+
+if not component.isAvailable("geolyzer") then
+  print("Geolyzer not found.")
+  return
+end
+local geolyzer = component.geolyzer
 
 
 -- Can be nil if component isn't installed
@@ -360,6 +366,37 @@ local function loop()
         local success = crafting.craft(count);
         acknowledge_or_error(success, "Recipe invalid")
 
+      elseif command[1] == "scan" then
+        local radius = tonumber(command[2]) or 12
+
+        if radius > 15 then
+          connection:write("{\"success\": false, \"error\": \"radius too large (max 15)\"};")
+        elseif radius < 1 then
+          connection:write("{\"success\": false, \"error\": \"radius invalid\"};")
+        else
+
+          connection:write("{\"success\": true, \"data\": {")
+
+          local width = radius*2 + 1
+          for x = 0, width-1 do
+            local y_section = {}
+            for y = 0, width-1 do
+              -- Arguments in x, z, y order
+              -- Call returns a 64 element array, we need elements 1:width
+              local z_section = geolyzer.scan(x - radius, -radius, y - radius, 1, width, 1)
+              local z_data = {}
+              for z = 1, width do
+                z_data[z-1] = z_section[z]
+              end
+              y_section[y] = z_data
+            end
+            if x > 0 then connection:write(", ") end
+            connection:write("\"" .. tostring(x) .. "\": " .. toJson(y_section):sub(1, -2))
+            connection:flush()
+          end
+          connection:write("}};")
+        end
+
       elseif command[1] == "reboot" then
         computer.shutdown(true)
 
@@ -397,7 +434,7 @@ local function loop()
       print("Error: " .. err)
       connection:write(toJson({success = false, error = err}))
       connection:flush()
-    end    
+    end
   end
 end
 

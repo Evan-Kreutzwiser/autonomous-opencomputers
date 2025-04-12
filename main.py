@@ -13,6 +13,7 @@ from textual.widgets import Button, Header, Input, RichLog
 import logger
 import planner
 import webserver
+from miner import model
 from robot import Robot
 
 # Allow the planner loop to be paused so that commands can manually be run
@@ -183,6 +184,9 @@ async def main():
     Spawn the UI and planner event loop, and allow the event 
     loop to exit gracefully when the UI is closed.
     """
+
+    # Load the pretrained neural network weights for the mining action
+    model.load_model()
 
     # Create the domain which defines all of the actions the planner can take
     # Unlike the problem file, this doesn't change based on the number of connected robots
