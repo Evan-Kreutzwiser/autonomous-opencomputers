@@ -16,6 +16,7 @@ import webserver
 from miner import model
 from robot import Robot
 import time
+import sys
 
 robots: dict[int, Robot] = {}
 
@@ -326,4 +327,9 @@ async def main():
 
 
 if __name__ == "__main__":
+
+    if len(sys.argv) > 1 and sys.argv[1] == "train":
+        model.train()
+        exit()
+
     asyncio.run(main())
