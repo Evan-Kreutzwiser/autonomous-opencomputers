@@ -34,24 +34,26 @@ class DQN(nn.Module):
         super(DQN, self).__init__()
         self.conv1 = nn.Conv3d(1, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv3d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv3d(64, 64, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv3d(64, 1, kernel_size=3, stride=1, padding=1)
         self.fc1 = nn.Linear(25 * 25 * 25, 512)
         self.fc2 = nn.Linear(512, 256)
-        self.fc3 = nn.Linear(256, n_actions)
+        self.fc3 = nn.Linear(257, n_actions)
 
-    def forward(self, x):
+    def forward(self, x, y_dist):
+        y_dist = torch.clamp(y_dist / 20, -1, 1)
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
+        x = torch.cat((x, y_dist.unsqueeze(1)), dim=1)
         x = self.fc3(x)
         x = x.mean(dim=0, keepdim=True)  # Average the 64 channels down to 1
         return x
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
+                        ('state', 'action', 'next_state', 'reward', 'y_dist'))
 
 class ReplayMemory():
 
@@ -102,7 +104,8 @@ def run_model_one_step(geolyzer_view: list[list[list[int]]], distance_from_targe
         raise RuntimeError("No model loaded for NN")
 
     view_tensor = torch.tensor(geolyzer_view, dtype=torch.float32, device=device).unsqueeze(0)
-    action = robot_nn(view_tensor).max(1).indices.view(1, 1)
+    y_tensor = torch.tensor([distance_from_target_y], device=device)
+    action = robot_nn(view_tensor, y_tensor).max(1).indices.view(1, 1)
 
     mapping = [
         "east", # +X
@@ -121,11 +124,12 @@ def run_model_one_step(geolyzer_view: list[list[list[int]]], distance_from_targe
 ################
 
 
-def step_environment(world: world.World, robot_position: tuple, action: int):
+def step_environment(world: world.World, robot_position: tuple, action: int, target_y: int):
     reward = 0.0
     mined_ore = False
 
     distance_to_ore = world.distance_to_nearest_ore(*robot_position)
+    distance_from_target_y = target_y - robot_position[1]
 
     target_position = robot_position
     if action == 0 or action == 6:
@@ -179,6 +183,14 @@ def step_environment(world: world.World, robot_position: tuple, action: int):
     else:
         reward -= 0.1
 
+    new_distance_from_target_y = target_y - new_position[1]
+
+    # Encourage staying close to a specific y level
+    if new_distance_from_target_y <= distance_from_target_y:
+        reward += 0.15
+    else:
+        reward -= 0.03 * new_distance_from_target_y
+
     return new_position, observation, reward, mined_ore
 
 # BATCH_SIZE is the number of transitions sampled from the replay buffer
@@ -207,7 +219,7 @@ memory = ReplayMemory(10000)
 steps_done = 0
 
 
-def select_action(state):
+def select_action(state, y_dist):
     global steps_done
     sample = random.random()
     eps_threshold = EPS_END + (EPS_START - EPS_END) * \
@@ -218,7 +230,7 @@ def select_action(state):
             # t.max(1) will return the largest column value of each row.
             # second column on max result is index of where max element was
             # found, so we pick action with the larger expected reward.
-            return policy_net(state).max(1).indices.view(1, 1)
+            return policy_net(state, y_dist).max(1).indices.view(1, 1)
     else:
         return torch.tensor([[random.randint(0, 8)]], device=device, dtype=torch.long)
 
@@ -272,11 +284,12 @@ def optimize_model():
     state_batch = torch.cat(batch.state)
     action_batch = torch.cat(batch.action)
     reward_batch = torch.cat(batch.reward)
+    y_dist_batch = torch.cat(batch.y_dist)
 
     # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
     # columns of actions taken. These are the actions which would've been taken
     # for each batch state according to policy_net
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    state_action_values = policy_net(state_batch, y_dist_batch).gather(1, action_batch)
 
     # Compute V(s_{t+1}) for all next states.
     # Expected values of actions for non_final_next_states are computed based
@@ -285,7 +298,7 @@ def optimize_model():
     # state value or 0 in case the state was final.
     next_state_values = torch.zeros(BATCH_SIZE, device=device)
     with torch.no_grad():
-        next_state_values[non_final_mask] = target_net(non_final_next_states).max(1).values
+        next_state_values[non_final_mask] = target_net(non_final_next_states, torch.zeros(BATCH_SIZE, device=device)).max(1).values
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
@@ -311,9 +324,11 @@ def train():
         print("Warning: Cuda device not available")
         num_episodes = 50
 
+    target_y = 0
     for i_episode in range(num_episodes):
         # Initialize the environment and get its state
         env = world.World(128, 64, 128)
+        target_y = random.randint(10, 50)
         robot_position = (64, 32, 64)
         print("Starting episode", i_episode)
 
@@ -322,8 +337,8 @@ def train():
 
         current_state = torch.tensor(env.noisy_data_around(12, *robot_position), dtype=torch.float32, device=device).unsqueeze(0)
         for t in range(384):
-            action = select_action(current_state)
-            new_position, observation, reward, did_mine_ore = step_environment(env, robot_position, action.item())
+            action = select_action(current_state, torch.tensor([target_y - robot_position[1]], device=device))
+            new_position, observation, reward, did_mine_ore = step_environment(env, robot_position, action.item(), target_y)
             reward = torch.tensor([reward], device=device)
 
             if did_mine_ore:
@@ -332,8 +347,9 @@ def train():
             next_state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
 
             # Store the transition in memory
-            memory.push(current_state, action, next_state, reward)
+            memory.push(current_state, action, next_state, reward, torch.tensor([target_y - robot_position[1]], device=device))
 
+            robot_position = new_position
             current_state = next_state
 
             # Perform one step of the optimization
@@ -359,7 +375,3 @@ def train():
     plot_durations(show_result=True)
     plt.ioff()
     plt.show()
-
-
-if __name__ == "__main__":
-    train()
