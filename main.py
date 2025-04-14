@@ -212,12 +212,14 @@ async def plan_actions(agents: dict[int, Robot]) -> bool:
         # Additionally, any failures updating the inventory should also cause an error here
         return False
 
-    actions = await planner.replan(agents)
-    if len(actions) == 0:
-        return False
-    
-    for robot_id, action in actions:
-        agents[robot_id].add_action(action)
+    # Plan for one robot at a time
+    for id, robot in agents.items():
+        actions = await planner.replan({id: robot})
+        if len(actions) == 0:
+            return False
+        
+        for robot_id, action in actions:
+            agents[robot_id].add_action(action)
     return True
 
 async def main():
@@ -305,7 +307,7 @@ async def main():
                     await asyncio.gather(*[agent.ready_event.wait() for agent in robots.values()])
 
                 else:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.25)
             
             except Exception as exception:
                 logger.exception(f"Error in main loop", exception, "Server")

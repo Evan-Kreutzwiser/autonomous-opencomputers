@@ -56,6 +56,8 @@ should_update_item_stacks = Predicate("should_update_item_stacks", robot_variabl
 
 cost_function = NumericFunction("cost", robot_variable)
 
+desired_ore_predicates = {ore: Predicate(f"needs_{ore}", robot_variable) for ore in ["coal", "iron", "gold", "redstone", "diamond"] }
+
 def create_domain() -> Domain:
     robot = robot_variable
     actions = []
@@ -184,7 +186,9 @@ def create_domain() -> Domain:
                     GreaterEqualThan(partial_stack_functions[ore](robot), NumericValue(8)),
                     GreaterEqualThan(full_stack_functions[ore](robot), NumericValue(1))
                 ),
-                GreaterEqualThan(partial_stack_functions["furnace"](robot), NumericValue(1))
+                GreaterEqualThan(partial_stack_functions["furnace"](robot), NumericValue(1)),
+                # Require a free slot for result
+                GreaterEqualThan(Minus(inventory_size_function(robot), inventory_slots_used_function(robot)), NumericValue(1))
                 ),
             effect=And(
                 Decrease(partial_stack_functions[ore](robot), NumericValue(8)),
@@ -192,7 +196,7 @@ def create_domain() -> Domain:
                 Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
                 Increase(cost_function(robot), NumericValue(1)),
                 Assign(inventory_slots_used_function(robot), NumericValue(0)),
-                should_update_item_stacks
+                should_update_item_stacks(robot)
             )
         ))
 
@@ -209,12 +213,13 @@ def create_domain() -> Domain:
                 LesserThan(partial_stack_functions[ore](robot), NumericValue(8)),
                 EqualTo(full_stack_functions[ore](robot), NumericValue(0)),
                 GreaterEqualThan(partial_stack_functions["furnace"](robot), NumericValue(1))
+                # Does not require a free slot because the action already empties one, which it will reuse
             ),
             effect=And(
                 Decrease(partial_stack_functions["coal"](robot), NumericValue(1)),
                 Increase(partial_stack_functions[cooked](robot), partial_stack_functions[ore](robot)),
                 Assign(partial_stack_functions[ore](robot), NumericValue(0)),
-                Decrease(inventory_slots_used_function(robot), NumericValue(1)),
+                should_update_item_stacks(robot),
                 Increase(cost_function(robot), NumericValue(2))
             )
         ))
@@ -267,9 +272,106 @@ def create_domain() -> Domain:
             ))
 
 
+    # Select which resources the mine action should prioritize
+    # Not used when mining with stone pickaxes
+    for ore in ["coal", "iron", "gold", "redstone", "diamond"]:
+        actions.append(Action(
+            f"should_mine_{ore}",
+            parameters=[robot],
+            precondition=And(
+                Not(should_update_item_stacks(robot)),
+                Not(desired_ore_predicates[ore](robot)),
+                Or(
+                    GreaterThan(non_stackable_items_functions["iron_pickaxe"](robot), NumericValue(0)),
+                    GreaterThan(non_stackable_items_functions["diamond_pickaxe"](robot), NumericValue(0))
+                )
+            ),
+            effect=And(desired_ore_predicates[ore](robot))
+        ))
+
+    actions.append(Action(
+        "mine",
+        parameters=[robot],
+        precondition=And(
+            Not(should_update_item_stacks(robot)),
+            # Require free inventory space for collected resources
+            GreaterEqualThan(Minus(inventory_size_function(robot), inventory_slots_used_function(robot)), NumericValue(7)),
+            GreaterThan(non_stackable_items_functions["stone_pickaxe"](robot), NumericValue(0)),
+            Or(
+                GreaterThan(non_stackable_items_functions["iron_pickaxe"](robot), NumericValue(0)),
+                GreaterThan(non_stackable_items_functions["diamond_pickaxe"](robot), NumericValue(0))
+            ),
+            Or(*[desired_ore_predicates[ore](robot) for ore in desired_ore_predicates.keys()]),
+            
+        ),
+        effect=And(
+            should_update_item_stacks(robot),
+            Increase(cost_function(robot), NumericValue(15)),
+            # Remove the 2 pickaxes used to mine. Diamond pickaxes have priority over iron.
+            Decrease(non_stackable_items_functions["stone_pickaxe"](robot), NumericValue(1)),
+            effects.When(
+                EqualTo(non_stackable_items_functions["diamond_pickaxe"](robot), NumericValue(0)),
+                Decrease(non_stackable_items_functions["iron_pickaxe"](robot), NumericValue(1))
+            ),
+            effects.When(
+                GreaterThan(non_stackable_items_functions["diamond_pickaxe"](robot), NumericValue(0)),
+                Decrease(non_stackable_items_functions["diamond_pickaxe"](robot), NumericValue(1))
+            ),
+            *[
+                effects.When(
+                    desired_ore_predicates[ore](robot),
+                    And(
+                        Increase(full_stack_functions[ore](robot), NumericValue(1)),
+                        Not(desired_ore_predicates[ore](robot))
+                    )
+                )
+                for ore in desired_ore_predicates.keys()
+            ]
+        )
+    ))
+
+    actions.append(Action(
+        "mine_near_surface",
+        parameters=[robot],
+        precondition=And(
+            Not(should_update_item_stacks(robot)),
+            # Require free inventory space for collected resources
+            GreaterEqualThan(Minus(inventory_size_function(robot), inventory_slots_used_function(robot)), NumericValue(4)),
+            GreaterEqualThan(non_stackable_items_functions["stone_pickaxe"](robot), NumericValue(2)),
+        ),
+        effect=And(
+            should_update_item_stacks(robot),
+            Increase(cost_function(robot), NumericValue(10)),
+            # Remove the 2 pickaxes used to mine. Diamond pickaxes have priority over iron.
+            Decrease(non_stackable_items_functions["stone_pickaxe"](robot), NumericValue(2)),
+            Increase(full_stack_functions["cobblestone"](robot), NumericValue(2)),
+            # I don't expect a stone pickaxe to gather nearly this much, but it'll trigger a replan anyway
+            Increase(full_stack_functions["coal"](robot), NumericValue(1)),
+            Increase(full_stack_functions["iron"](robot), NumericValue(1)),
+        )
+    ))
+
+    actions.append(Action(
+        "collect_cobblestone",
+        parameters=[robot],
+        precondition=And(
+            Not(should_update_item_stacks(robot)),
+            # Require free inventory space for collected resources
+            GreaterEqualThan(Minus(inventory_size_function(robot), inventory_slots_used_function(robot)), NumericValue(1)),
+            GreaterEqualThan(non_stackable_items_functions["wooden_pickaxe"](robot), NumericValue(2)),
+        ),
+        effect=And(
+            should_update_item_stacks(robot),
+            Increase(cost_function(robot), NumericValue(10)),
+            # Remove the 2 pickaxes used to mine. Diamond pickaxes have priority over iron.
+            Decrease(non_stackable_items_functions["stone_pickaxe"](robot), NumericValue(2)),
+            Increase(full_stack_functions["cobblestone"](robot), NumericValue(1)),
+        )
+    ))
+    
     domain = Domain(
         "OpenComputersDomain",
-        requirements=[Requirements.TYPING, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
+        requirements=[Requirements.TYPING, Requirements.CONDITIONAL_EFFECTS, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
         actions=actions,
         functions={function: None for function_list in [
             full_stack_functions.values(),
@@ -278,7 +380,7 @@ def create_domain() -> Domain:
             [inventory_size_function, inventory_slots_used_function, cost_function]
         ] for function in function_list},
         types=types,
-        predicates=[should_update_item_stacks] #+ list(should_update_item.values())
+        predicates=[should_update_item_stacks, *desired_ore_predicates.values()]
     )
 
     return domain
@@ -321,6 +423,8 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
         initial_state.append(EqualTo(inventory_slots_used_function(robot_objects[robot.id]), NumericValue(slots_used)))
         initial_state.append(Not(should_update_item_stacks(robot_objects[robot.id])))
 
+        for predicate in desired_ore_predicates.values():
+            initial_state.append(Not(predicate(robot_objects[robot.id])))
 
     total_cost = None
     for robot in robot_objects.values():
@@ -333,7 +437,7 @@ def create_problem(robots: dict[int, Robot]) -> Problem:
         "OpenComputersProblem",
         domain=create_domain(),
         objects=robot_objects.values(),
-        requirements=[Requirements.TYPING, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
+        requirements=[Requirements.TYPING, Requirements.CONDITIONAL_EFFECTS, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
         init=initial_state,
         # Placeholder goal for testing output files
         goal=And(

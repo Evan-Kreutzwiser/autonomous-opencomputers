@@ -1,12 +1,12 @@
 import asyncio
 import json
 from typing import Literal
+import inference
 import logger
 from miner import model
 from recipes import convert_item_name
 import recipes
 import webserver
-
 
 class Robot:
     """
@@ -35,6 +35,8 @@ class Robot:
         self.position = position or (0, 0, 0)
         self.direction = direction or "north"
         
+        self.desired_ores = []
+
         self.action_queue = asyncio.Queue()
         self.current_action = None
         # Indicates to the planner that the robot has completed its actions
@@ -511,12 +513,15 @@ class MineAction(Action):
         
         # Equip pickaxe to mine with
 
+        override_depth = False
         index = self.robot.find_item("diamond_pickaxe")
         if index == -1:
             index = self.robot.find_item("iron_pickaxe")
         if index == -1:
             index = self.robot.find_item("stone_pickaxe")
-        
+            # Stone can only mine coal and iron, so avoid going down to a level where the model will get stuck on other ores. 
+            override_depth = True            
+
         response = await webserver.send_command(self.robot.id, f"equip {index}")
         data = json.loads(response)
         if not data["success"]:
@@ -549,7 +554,8 @@ class MineAction(Action):
                 logger.error("Failed to read geolyzer data", self.robot.id)
                 done = True
 
-            # TODO: Bayes net optimal mining height tracking
+            ores = self.robot.desired_ores
+            y_level = inference.determine_optimal_depth("coal" in ores, "iron" in ores, "gold" in ores, "redstone" in ores, "diamond" in ores) if not override_depth else 40
             direction, should_mine = model.run_model_one_step(geolyzer_view, 0)
 
             logger.info(f"Action: {direction}, {'mining' if should_mine else 'move'}", self.robot.id)
@@ -580,6 +586,7 @@ class MineAction(Action):
 
             next_inventory_check_countdown -= 1
 
+        self.robot.desired_ores.clear()
 
         # Using weaker pickaxe, return to surface
         index = self.robot.find_item("stone_pickaxe")
@@ -620,6 +627,61 @@ class MineAction(Action):
         return True
 
 
+class GetCobblestoneAction(Action):
+    async def run(self) -> bool:
+        # Equip a wooden pickaxe
+        index = self.robot.find_item("wooden_pickaxe")
+        if index == -1:
+            logger.error("GetCobblestone: No wooden pickaxe found in inventory", self.robot.id)
+            return False
+
+        await webserver.send_command(self.robot.id, f"equip {index}")
+
+        blocks_dug = 0
+        while True:
+            if blocks_dug % 8 == 7:
+                # Drop dirt from surface or other unwanted items
+                await self.robot.update_inventory()
+                await self.robot.drop_unrecognized_items()
+
+            response = await webserver.send_command(self.robot.id, "swing down")
+            data = json.loads(response)
+            await self.robot.move("down")
+            if not data["success"]:
+                logger.error("GetCobblestone: Failed to move down", self.robot.id)
+                if data["error"] != "no tool equipped":
+                    # Swap pickaxe out into slot 1 to drop it, and place the item back
+                    await webserver.send_command(self.robot.id, "equip 1")
+                    await webserver.send_command(self.robot.id, "drop 1")
+                    await webserver.send_command(self.robot.id, "equip 1")
+                break
+
+
+            await webserver.send_command(self.robot.id, "swing front")
+
+            if self.cancel_event.is_set():
+                break
+
+        # Climb out of the hole and move from on top of it
+        for _ in range(blocks_dug):
+            await self.robot.move("up")
+
+        await self.robot.move("front")
+        await self.robot.move("front")
+
+        # Clear away any dirt that may have been picked up
+        await self.robot.update_inventory()
+        await self.robot.drop_unrecognized_items()
+
+class PlanToMineResourceAction(Action):
+    def __init__(self, robot: Robot, ore: str):
+        super().__init__(robot)
+        self.ore = ore
+
+    async def run(self):
+        self.robot.desired_ores.append(self.ore)
+        return True
+
 def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
         item = action_name.split("_", 2)[-1]
@@ -642,9 +704,17 @@ def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action
         item = action_name.split("_", 2)[-1]
         return DropAction(robot, item, True)
 
-    elif action_name == "mine":
+    elif action_name.startswith("needs_"):
+        item = action_name.split("_", 2)[-1]
+        return PlanToMineResourceAction(robot, item)
+
+    elif action_name == "mine" or action_name == "mine_near_surface":
+        # Will automatically detect lack for better pickaxes to use surface mining
         return MineAction(robot)
     
+    elif action_name == "collect_cobblestone":
+        return GetCobblestoneAction(robot)
+
     elif action_name == "wait":
         return WaitAction(robot)
     else:
