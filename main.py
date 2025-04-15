@@ -214,13 +214,13 @@ async def plan_actions(agents: dict[int, Robot]) -> bool:
         return False
 
     # Plan for one robot at a time
-    for id, robot in agents.items():
-        actions = await planner.replan({id: robot})
+    for robot in agents.values():
+        actions = await planner.replan(robot)
         if len(actions) == 0:
             return False
         
-        for robot_id, action in actions:
-            agents[robot_id].add_action(action)
+        for action in actions:
+            robot.add_action(action)
     return True
 
 async def main():

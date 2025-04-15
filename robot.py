@@ -50,9 +50,9 @@ class Robot:
             while not self.action_queue.empty():
                 # Actions queued are in the form of a list of strings,
                 # where the first entry is the pddl function name and any further entries are arguments.
-                action_name, *args = self.action_queue.get_nowait()
-                logger.info(f"Executing action {action_name} {args or ''}", self.id)
-                self.current_action = _action_from_name(action_name, args, robot=self)
+                action_name = self.action_queue.get_nowait()
+                logger.info(f"Executing action {action_name}", self.id)
+                self.current_action = _action_from_name(action_name, robot=self)
                 success = await self.current_action.run()
 
                 self.current_action = None
@@ -682,7 +682,7 @@ class PlanToMineResourceAction(Action):
         self.robot.desired_ores.append(self.ore)
         return True
 
-def _action_from_name(action_name: str, args: list[str], robot: Robot) -> Action:
+def _action_from_name(action_name: str, robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
         item = action_name.split("_", 2)[-1]
         return SmeltAction(robot, item, True)
