@@ -488,6 +488,7 @@ async def replan(robot: Robot) -> list[str]:
         return actions
     else:
         logger.error(f"No solution found (Processed for {duration.total_seconds():.2f} seconds).", "Planner")
+        logger.info(stderr.decode(), "Planner")
         return []
 
 
