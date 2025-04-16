@@ -220,7 +220,13 @@ def create_domain() -> Domain:
         ))
 
     # Drop items on the ground to open up inventory space
-    for item in items_list:
+    # Components used to build robots are not allowed to be dropped
+    dropable_items = [i for i in items_list if i not in [
+        "assembler", "cpu_tier_1", "cpu_tier_3", "ram_tier_1", "ram_tier_2", "ram_tier_3",
+        "geolyzer", "internet_card", "crafting_upgrade", "inventory_upgrade", "inventory_controller",
+        "floppy_disk_drive", "floppy_disk", "eeprom", "robot", "case_tier_1", "case_tier_3"
+        ]]
+    for item in dropable_items:
         if stack_size[item] > 1:
             # Stackable items (Can discard either a full stack or the partial stack)
             actions.append(Action(
