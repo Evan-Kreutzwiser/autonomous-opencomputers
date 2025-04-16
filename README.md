@@ -4,7 +4,7 @@ Grant autonomy to your OpenComputers robots, driving them to explore your world 
 
 ## Project Description
 
-This project is my submission for the CISC 352 course project, which involves applying 3 AI methodologies from the course material to a topic of choice. The 3 areas chosen for this project are automated planning, probabilistic inference, and deep learning
+This project is my submission for the CISC 352 course project, which involves applying 3 AI methodologies from the course material to a topic of choice. The 3 areas chosen for this project are automated planning, probabilistic inference, and deep learning.
 
 ### Automated Planning
 
@@ -55,14 +55,14 @@ Once in game, you will need to create the first robot yourself. Using an assembl
 - a tier 3 CPU
 - RAM (Required amount untested, but don't cheap out on it)
 - an internet card
-- a hard drive with a copy of OpenOS installed using another computer (or install using a floppy disk)
 - a graphics card, screen, and keyboard for setup and troubleshooting
-- a Lua BIOS EEPROM (Combine with a manual to flash)
-- 3 inventory upgrades
+- a Lua BIOS EEPROM (Combine with a cobblestone to flash, recipe was modified)
+- 4 inventory upgrades
 - an inventory controller
 - a crafting upgrade
 - a geolyzer
-- a floppy disk drive
+- 2 floppy disk drives
+- a floppy disk with OpenOS installed on it
 
 **It is important to use all of the required parts**, as you cannot modify the robot after assembling it!
 
@@ -88,8 +88,12 @@ client.lua
 
 If everything is working correctly, the message `[1] Bot connected` will appear in the server terminal and the planner will start automatically!
 
+## Miner Neural Network Training
+
+To train a new instance of the DQN for the mining action, run `python main.py train`. During training the weights are periodically saved in `miner/checkpoints`, and `miner/model.pt` can be manually replaced with one of the generated files to update the network. Either restart the program or enter the command `reloadnn` in the TUI to refresh the model.
+
 ## Limitations
 
-Due to the nature of the robots' hardware and the timeframe of this project, some special considerations have to be made in the configuration. Namely, custom recipes are provided for items that require paper, clay, or mob drops, and electricity consumption must be disabled. Additionally, OpenComputers has not officially been released for versions newer than 1.12, so that is the target game version of the project
+Due to the nature of the robots' hardware and the timeframe of this project, some special considerations have to be made in the configuration. Namely, custom recipes are provided for items that require paper, clay, or mob drops, and electricity consumption must be disabled. Additionally, OpenComputers has not officially been released for versions newer than 1.12, so that is the target game version of the project. Give the robot some logs to start with, because the robot is not yet capable of choping trees on its own.
 
 The PDDL planner is invoked using [planutils](https://github.com/AI-Planning/planutils/tree/main), which limits the project to running on linux systems only - although planutils does include instructions for building docker containers
