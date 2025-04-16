@@ -1,14 +1,26 @@
 local os = require("os")
+local component = require("component")
+
+local clientVersion = "0.0.6"
+
+-- The client script is also copied into the computer that activates the assembler
+if not component.isAvailable("robot") then
+  print("Not running on robot. Attempting to activate assembler")
+
+  if not component.isAvailable("assembler") then
+    print("Failed: Assembler not connected")
+    return
+  end
+  component.assembler.start()
+  os.exit()
+end
+
 local botId = require("id")
-
-local clientVersion = "0.0.5"
-
 local sides = require("sides")
 local robot = require("robot")
 local shell = require("shell")
 local computer = require("computer")
 
-local component = require("component")
 if not component.isAvailable("internet") then
   print("Internet card not found.")
   return
@@ -26,9 +38,11 @@ if not component.isAvailable("geolyzer") then
 end
 local geolyzer = component.geolyzer
 
-
--- Can be nil if component isn't installed
-local crafting = component.isAvailable("crafting") and component.crafting or nil
+if not component.isAvailable("crafting") then
+  print("Crafting upgrade not found.")
+  return
+end
+local crafting = component.crafting
 
 local connection
 
