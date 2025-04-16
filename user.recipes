@@ -18,6 +18,10 @@ eeprom {
           ["oc:circuitChip1", redstone, "oc:circuitChip1"]
           [nuggetGold, torchRedstoneActive, nuggetGold]]
 }
+luaBios {
+  type: shapeless
+  input: ["oc:eeprom", cobblestone]
+}
 
 floppy {
   input: [[ingotIron, lever, ingotIron]
