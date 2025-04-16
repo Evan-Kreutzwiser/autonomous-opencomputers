@@ -12,6 +12,8 @@ removed_connections = []
 # Stops the planner to handle new/removed agents
 connections_updated_event = asyncio.Event()
 
+max_observed_id = 0
+
 class UpdateServer (http.server.BaseHTTPRequestHandler):
     """Provide robots a way to fetch new copies of their client runtime."""
     def do_GET(self):
@@ -92,6 +94,8 @@ async def _handle_new_client(reader: asyncio.StreamReader, writer: asyncio.Strea
         writer.write(("ack;\n").encode())
         connections[bot_id] = (reader, writer)
         new_connections.append(bot_id)
+        if bot_id > max_observed_id:
+            max_observed_id = bot_id
         connections_updated_event.set()
         
     except UnicodeDecodeError:

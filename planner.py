@@ -391,7 +391,7 @@ def create_domain() -> Domain:
     return domain
 
 
-def create_problem(robot: Robot) -> Problem:
+def create_problem(item_quantities: dict[str, int], inventory_size: int, goal_item: str) -> Problem:
     """
     Create a PDDL problem from a dictionary of robots and their inventories.
     
@@ -401,8 +401,7 @@ def create_problem(robot: Robot) -> Problem:
     """
     initial_state = []
 
-    inventory = robot.count_items()
-    for item, quantity in inventory.items():
+    for item, quantity in item_quantities.items():
         if item not in items_list:
             logger.info(f"Warning: Robot has item \"{item}\" (x{quantity}), which is not recognized by the planner!", robot.id)
         elif stack_size[item] > 1:
@@ -412,48 +411,111 @@ def create_problem(robot: Robot) -> Problem:
             initial_state.append(EqualTo(non_stackable_items_functions[item], NumericValue(quantity)))
 
     # All items not listed in the inventory are assumed to be 0
-    for absent_item in [item for item in items_list if item not in inventory.keys()]:
+    for absent_item in [item for item in items_list if item not in item_quantities.keys()]:
         if stack_size[absent_item] > 1:
             initial_state.append(EqualTo(full_stack_functions[absent_item], NumericValue(0)))
             initial_state.append(EqualTo(partial_stack_functions[absent_item], NumericValue(0)))
         else:
             initial_state.append(EqualTo(non_stackable_items_functions[absent_item], NumericValue(0)))
 
-    print(f"Inventory Size: {len(robot.inventory)-1}")
-    initial_state.append(EqualTo(inventory_size_function, NumericValue(len(robot.inventory) - 1)))
+    print(f"Inventory Size: {inventory_size}")
+    initial_state.append(EqualTo(inventory_size_function, NumericValue(inventory_size)))
 
-    slots_used = len([1 for item in robot.inventory if item is not None])
-    initial_state.append(EqualTo(inventory_slots_used_function, NumericValue(slots_used)))
-    initial_state.append(Not(should_update_item_stacks))
+    # Calculate the number of slots used within the planner as the first step
+    initial_state.append(EqualTo(inventory_slots_used_function, NumericValue(0)))
+    initial_state.append(should_update_item_stacks)
 
     for predicate in desired_ore_predicates.values():
         initial_state.append(Not(predicate))
+
+    goal = None
+    target_amount = item_quantities.get(goal_item, 0) + 1
+    if stack_size[goal_item] > 1:
+        goal = GreaterEqualThan(partial_stack_functions[goal_item], NumericValue(target_amount))
+    else:
+        goal = GreaterEqualThan(non_stackable_items_functions[goal_item], NumericValue(target_amount))
 
     problem = Problem(
         "OpenComputersProblem",
         domain=create_domain(),
         requirements=[Requirements.CONDITIONAL_EFFECTS, Requirements.ACTION_COSTS, Requirements.NUMERIC_FLUENTS, Requirements.NEG_PRECONDITION, Requirements.DIS_PRECONDITION],
         init=initial_state,
-        # Placeholder goal for testing output files
-        goal=And(
-                GreaterEqualThan(non_stackable_items_functions["diamond_pickaxe"], NumericValue(1)),
-                GreaterEqualThan(partial_stack_functions["cpu_tier_3"], NumericValue(1)),
-                # GreaterEqualThan(partial_stack_functions["crafting_table"](robot_objects[max_robot_id]), NumericValue(1)),
-                # GreaterEqualThan(inventory_functions["case_tier_3"](robot_objects[3]), NumericValue(1)),
-            ),
+        goal=And(goal),
         metric=Metric(cost_function, Metric.MINIMIZE)
     )
 
     return problem
 
 
+def determine_goal(robot: Robot) -> str:
+    """Based on the robot's inventory, determine which item the planner should pursue next"""
+    
+    items = robot.count_items()
+    has = lambda s: s in items.keys()
+    amount = lambda s: items.get(s, 0)
+    goal = "robot"
+
+    # Goals collect the parts required to build a robot and the assembly computer.
+    # Robot:
+    # - Tier 3 Case and cpu
+
+    if amount("cobblestone") < 24:
+        # Minimize reliance on wooden pickaxes by avoiding running out of cobblestone
+        goal = "cobblestone"
+    elif not has("diamond_pickaxe"):
+        goal = "diamond_pickaxe"
+
+    elif amount("case_tier_3") < 2:
+        # Tier 3 has a built-in floppy drive, necessary to make the computer activate the assembler on boot
+        # (Can't write the os to an hdd without an existing computer)
+        goal = "case_tier_3"
+    elif amount("ram_tier_2") < 3:
+        goal = "ram_tier_2"
+    elif not has("cpu_tier_1"):
+        goal = "cpu_tier_1"
+    elif not has("cpu_tier_3"):
+        goal = "cpu_tier_3"
+
+    elif not has("assembler"):
+        goal = "assembler"
+    
+    # Bios and primary storage
+    elif amount("eeprom") < 2:
+        goal = "eeprom"
+    elif not has("floppy_disk"):
+        goal = "eeprom"
+
+    # Robot upgrades
+    elif not has("crafting_upgrade"):
+        goal = "crafting_upgrade"
+    elif not has("inventory_controller"):
+        goal = "inventory_controller"
+    elif amount("inventory_upgrade") < 4:
+        # Having 4 upgrades provides 64 slots of inventory space, for easier handling of all of the intermediate ingredients the robot can possess
+        goal = "inventory_upgrade"
+    elif not has("internet_card"):
+        goal = "internet_card"
+    elif not has("floppy_disk_drive"):
+        goal = "floppy_disk_drive"
+    elif not has("geolyzer"):
+        goal = "geolyzer"
+
+    return goal
+
 async def replan(robot: Robot) -> list[str]:
     """
-    Determine which actions each robot should taek to contrstruct a new robot.
+    Determine which actions a robot should take to contrstruct a new robot. The items will be
+    created over the course of many separate invocations of the planner.
 
-    :param robots: All connected robots, with up to date inventories and empty action queues.
+    :param robot: The robot to plan for, with an up to date inventory and empty action queue.
     """
-    problem = create_problem(robot)
+
+    goal_item = determine_goal(robot)
+
+    if goal_item == "robot":
+        return ["create_robot"]
+
+    problem = create_problem(robot.count_items(), len(robot.inventory) - 1, goal_item)
     open("problem.pddl", "w").write(str(problem))
 
     start_time = datetime.now()
@@ -482,8 +544,9 @@ async def replan(robot: Robot) -> list[str]:
             if ": (" in line:
                 # Extract the action from the surrounding text
                 action_string = line.split(": (")[1].split(")")[0]
-                actions.append(action_string)
-                logger.info(action_string, "Planner")
+                if action_string != "update_stack_usage":
+                    actions.append(action_string)
+                    logger.info(action_string, "Planner")
 
         # Make robots without instructions wait for other robots to finish
         # Mostly just required for the simple testing goals
@@ -534,13 +597,8 @@ if __name__ == "__main__":
         None,
         None,
     ]
-    problem = create_problem(robot)
 
     open("domain.pddl", "w").write(str(domain))
-    # I'd prefer to keep this in-memory because of the frequent replanning,
-    # but would need a way to get it through to the planner's container
-    open("problem.pddl", "w").write(str(problem))
-
     
     plan = asyncio.run(replan(robot))
     # replan function logs actions taken to terminal

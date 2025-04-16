@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# DQN Training
+miner/checkpoints
+
 # PDDL files and log
 *.pddl
 autonomous-opencomputers-log.txt

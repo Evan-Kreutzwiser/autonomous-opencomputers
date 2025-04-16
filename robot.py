@@ -339,6 +339,16 @@ class Robot:
 
         return table
 
+    async def empty_crafting_grid(self) -> bool:
+        for i in range(1, 13):
+            if (i-1) % 4 < 3 and (self.robot.inventory[i] is not None):
+                dest_index = self.robot.first_empty_slot(exclude_crafting_grid=True)
+                success = await self.robot.transfer_items(i, dest_index)
+                if not success:
+                    logger.error(f"Failed to clear crafting grid (moving slot {i} to {dest_index})", self.robot.id)
+                    return False
+        return True
+
 
 class Action:
     """
@@ -404,15 +414,11 @@ class CraftAction(Action):
                 logger.error(f"Missing {ingredient} required to craft {self.item}", self.robot.id)
                 return False
 
-        # Empty the crafting grid
-        for i in range(1, 13):
-            if (i-1) % 4 < 3 and (self.robot.inventory[i] is not None):
-                dest_index = self.robot.first_empty_slot(exclude_crafting_grid=True)
-                success = await self.robot.transfer_items(i, dest_index)
-                if not success:
-                    logger.error(f"Failed to clear crafting grid (moving slot {i} to {dest_index})", self.robot.id)
-                    return False
-        
+        # Clear the top left corner of the inventory
+        success = await self.robot.empty_crafting_grid()
+        if not success:
+            return False
+
         # Place the ingredients in the correct slots for crafting
         recipe_data = recipes.recipes[self.item]
         for row in range(3):
@@ -446,20 +452,33 @@ class SmeltAction(Action):
     def __init__(self, robot: Robot, item: str, smelt_8: bool):
         super().__init__(robot)
         self.item = item
-        self.smelt_8 = smelt_8
+        self.smelt_8 = smelt_8 # Unused, TODO: Remove
 
     async def run(self) -> bool:
-        # Check if the item is in the robot's inventory
-        # TODO: Make a generic function to search and combine item stacks
-        slot_number = None
-        for index, slot in enumerate(self.robot.inventory):
-            if slot and slot[0] == self.item and slot[1] >= self.quantity:
-                slot_number = index
-        if not slot_number:
-            logger.info(f"Smelt: Not enough of {self.item} found in inventory", self.robot.id)
+        self.robot.consolidate_stacks()
+        
+        if self.robot.find_item("furnace") == -1:
+            # TODO: The furnace is abandoned after smelting, but the planner assumed it is kept
+            logger.error("Missing furnace for smelting", self.robot.id)
             return False
 
-        # TODO: Implmenent action
+        # Place a furnace and load the items and fuel into it
+        await webserver.send_command(self.robot.id, f"select {self.robot.find_item('furnace')}")
+        await webserver.send_command(self.robot.id, "place front")
+
+        await webserver.send_command(self.robot.id, f"select {self.robot.find_item(self.item)}")
+        await webserver.send_command(self.robot.id, "insert front 1 8")
+
+        await webserver.send_command(self.robot.id, f"select {self.robot.find_item('coal')}")
+        await webserver.send_command(self.robot.id, "insert front 2 1")
+
+        # A furnace takes 80 seconds to cook 8 items
+        await asyncio.sleep(85)
+
+        # Collect the finished product
+        # TODO: Don't abandon the furnace
+        await webserver.send_command(self.robot.id, f"select 1")
+        await webserver.send_command(self.robot.id, "take front 3")
 
         return True
 
@@ -496,6 +515,7 @@ class DropAction(Action):
         
         self.robot.inventory[slot_number] = None
         return True
+
 
 class MineAction(Action):
 
@@ -556,7 +576,7 @@ class MineAction(Action):
 
             ores = self.robot.desired_ores
             y_level = inference.determine_optimal_depth("coal" in ores, "iron" in ores, "gold" in ores, "redstone" in ores, "diamond" in ores) if not override_depth else 40
-            direction, should_mine = model.run_model_one_step(geolyzer_view, 0)
+            direction, should_mine = model.run_model_one_step(geolyzer_view, y_level)
 
             logger.info(f"Action: {direction}, {'mining' if should_mine else 'move'}", self.robot.id)
             if direction != "up" and direction != "down":
@@ -628,6 +648,8 @@ class MineAction(Action):
 
 
 class GetCobblestoneAction(Action):
+    """Lacking any better pickaxes, excavate some cobblestone to work towards better tools"""
+
     async def run(self) -> bool:
         # Equip a wooden pickaxe
         index = self.robot.find_item("wooden_pickaxe")
@@ -673,7 +695,13 @@ class GetCobblestoneAction(Action):
         await self.robot.update_inventory()
         await self.robot.drop_unrecognized_items()
 
+
 class PlanToMineResourceAction(Action):
+    """
+    Flag a type of ore as a desired target for the next time the mine action is run.
+    The list of target ores is used as input for the bayes net which determines the optimal mining depth.
+    """
+
     def __init__(self, robot: Robot, ore: str):
         super().__init__(robot)
         self.ore = ore
@@ -681,6 +709,120 @@ class PlanToMineResourceAction(Action):
     async def run(self):
         self.robot.desired_ores.append(self.ore)
         return True
+
+
+class AssembleRobotAction(Action):
+    """Assemble and activate a new robot"""
+
+    async def run(self):
+        
+        # Start by clearing out a location for the assembler
+        # Based on the planner's goal prioritization, it is assumed that 
+        # this action is run with a diamond pickaxe and some cobblestone
+        
+        await self.robot.update_inventory()
+        slot = self.robot.find_item("diamond_pickaxe")
+        await webserver.send_command(self.robot.id, f"equip {slot}")
+
+        async def insert(item, dest_slot):
+            slot = self.robot.find_item(item)
+            await webserver.send_command(self.robot.id, f"select {slot}")
+            await webserver.send_command(self.robot.id, f"insert front {dest_slot} 1")
+
+        # Load items into assembler
+        slot = self.robot.find_item("assembler")
+        await webserver.send_command(self.robot.id, "place")
+
+        # See https://ocdoc.cil.li/block:assembler for slot number reference
+        await insert("case_tier_3", 1)
+        await insert("cpu_tier_3", 17)
+        await insert("ram_tier_2", 18)
+        await insert("ram_tier_2", 19)
+        
+        await insert("floppy_disk_drive", 4)
+        await insert("inventory_upgrade", 10)
+        await insert("inventory_upgrade", 11)
+        await insert("inventory_upgrade", 12)
+        await insert("inventory_upgrade", 13)
+        await insert("inventory_controller", 9)
+        await insert("crafting_upgrade", 8)
+        await insert("geolyzer", 7)
+        await insert("internet_card", 14)
+
+        # Program the eeprom with the default bios using a special crafting recipe
+        success = await self.robot.empty_crafting_grid()
+        if not success:
+            return False
+
+        self.robot.transfer_items(self.robot.find_item("eeprom"), 1, 1)
+        self.robot.transfer_items(self.robot.find_item("cobblestone"), 2, 1)
+        await webserver.send_command(self.robot.id, "craft")
+        await self.robot.update_inventory()
+
+        # This should locate the programmed one that was just crafted because of its lower slot #
+        await insert("eeprom", 20)
+
+        self.robot.move("left")
+
+        # Build computer to activate assembler
+        slot = self.robot.find_item("case_tier_3")
+        await webserver.send_command(self.robot.id, "place")
+
+        # Slot numbers don't make much sense for computer cases - discovered through trial and error
+        await insert("ram_tier_2", 5)
+        await insert("cpu_tier_3", 9)
+
+        success = await self.robot.empty_crafting_grid()
+        if not success:
+            return False
+
+        self.robot.transfer_items(self.robot.find_item("eeprom"), 1, 1)
+        self.robot.transfer_items(self.robot.find_item("cobblestone"), 2, 1)
+        await webserver.send_command(self.robot.id, "craft")
+        await self.robot.update_inventory()
+        await insert("eeprom", 10)
+
+        # Copy the OS and client to the new floppy disk (requires robots have a second disk drive)
+        floppy_slot = len(self.robot.inventory) + 2
+        await self.robot.transfer_items(self.robot.find_item("floppy_disk"), floppy_slot)
+
+        webserver.max_observed_id += 1
+        await webserver.send_command(self.robot.id, f"install {webserver.max_observed_id}")
+
+        empty_slot = self.robot.first_empty_slot()
+        await self.robot.transfer_items(floppy_slot, empty_slot)
+        await insert("floppy_disk", 8)
+
+        # Sneak-clicking on the case turns on the computer
+        await webserver.send_command(self.robot.id, "use true")
+
+        # Go back to assembler to retrieve robot
+        await self.robot.move("right")
+        await asyncio.sleep(30)
+
+        await webserver.send_command(self.robot.id, "take front 1")
+
+        # Pickup assembler for reuse
+        await webserver.send_command(self.robot.id, "select")
+        await webserver.send_command(self.robot.id, "swing front")
+
+        await self.robot.move("left")
+
+        # Reuse the floppy disk from the assembly computer in the new robot
+        await webserver.send_command(self.robot.id, "take front 8")
+
+        await self.robot.turn_right()
+        
+        slot = self.robot.find_item("robot")
+        await webserver.send_command(self.robot.id, "place")
+        await insert("floppy_disk", 66)
+
+        # Sneak click to power on the new robot
+        await webserver.send_command(self.robot.id, "use true")
+
+        await self.robot.move("back")
+        return True
+
 
 def _action_from_name(action_name: str, robot: Robot) -> Action:
     if action_name.startswith("smelt_8_"):
@@ -710,15 +852,17 @@ def _action_from_name(action_name: str, robot: Robot) -> Action:
 
     elif action_name == "mine" or action_name == "mine_near_surface":
         # Will automatically detect lack for better pickaxes to use surface mining
-        return MineAction(robot)
-    
+        return MineAction(robot)    
     elif action_name == "collect_cobblestone":
         return GetCobblestoneAction(robot)
+
+    elif action_name == "create_robot":
+        return AssembleRobotAction(robot)
 
     elif action_name == "wait":
         return WaitAction(robot)
     else:
-        # No-Op
+        # No-Op, catches internal actions like stack usage calculation
         return Action(robot)
 
 

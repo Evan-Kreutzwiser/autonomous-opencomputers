@@ -1,18 +1,20 @@
 local os = require("os")
 local component = require("component")
 
-local clientVersion = "0.0.6"
+local clientVersion = "0.0.7"
 
 -- The client script is also copied into the computer that activates the assembler
-if not component.isAvailable("robot") then
+-- component.computer.isRobot() is mentioned in the docs, but doesn't appear to actually exist,
+-- so I have to make an assumption based on the presence of a component I'd only put in the robot
+if not component.isAvailable("crafting") then
   print("Not running on robot. Attempting to activate assembler")
-
+  
   if not component.isAvailable("assembler") then
     print("Failed: Assembler not connected")
     return
   end
   component.assembler.start()
-  os.exit()
+  return
 end
 
 local botId = require("id")
@@ -437,6 +439,19 @@ local function loop()
         connection:flush()
         connection:close()
         exit = true
+
+      elseif command[1] == "install" then
+        local newId = command[2] or "0"
+
+        -- On a system with 2 floppy disk drives, copy openos and the client onto the other drive
+        -- TODO: Error checking
+        shell.execute("install")
+
+        shell.execute("cp /home/client.lua /mnt/home/client.lua")
+        shell.execute('echo "enabled = {"client"}" > /mnt/etc/rc.cfg')
+        shell.execute('echo "function start()\n    dofile("/home/client.lua")\nend" > /mnt/etc/rc.d/client.lua')
+        shell.execute('echo "return ' .. newId .. '" > /mnt/etc/rc.d/client.lua')
+        connection:write("{\"success\": true};")
 
       else
         connection:write(toJson({success = false, error = " Unknown command: " .. command[1] }))
